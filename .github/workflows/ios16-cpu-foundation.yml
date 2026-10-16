@@ -1,0 +1,54 @@
+name: MCLA iOS 16 - CPU foundation and shader tools
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios16-native-backport]
+    paths:
+      - '.github/workflows/ios16-cpu-foundation.yml'
+      - 'MCLAApp/tools/aot_compile/**'
+      - 'tools/ios16_aot_toolchain_probe.cpp'
+      - 'tools/build_mcla_shader_translator.sh'
+      - 'tools/mcla-xenosrecomp/pch.h'
+permissions:
+  contents: read
+jobs:
+  compile-ios16-cpu:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Initialize pinned CPU foundation
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 larecomp theft4-foundation
+          sdk=glue/rexglue-sdk-main/thirdparty
+          git -C theft4-foundation submodule update --init --depth 1 -- \
+            "$sdk/cli11" "$sdk/libmspack" "$sdk/FFmpeg" \
+            "$sdk/tomlplusplus" "$sdk/simde" "$sdk/xxHash" \
+            "$sdk/spdlog" "$sdk/fmt" "$sdk/snappy" "$sdk/utfcpp" \
+            "$sdk/imgui" "$sdk/sdl3" "$sdk/inja" "$sdk/o1heap"
+          sh tools/apply_dependency_patches.sh
+      - name: Compile standalone shader translator without DXC or a GPU
+        run: sh tools/build_mcla_shader_translator.sh
+      - name: Verify Xenia endian and normalization handling
+        run: python3 tools/test_ios16_shader_import.py
+      - name: Configure real CPU foundation for arm64 and iOS 16
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          cmake -S MCLAApp/tools/aot_compile -B out/ios16-cpu-probe -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 -DMCLA_AOT_PROBE_ONLY=ON
+      - name: Compile foundation and public synthetic CPU fixture
+        run: cmake --build out/ios16-cpu-probe --target MCLACPUCompilation --parallel 4
+      - name: Verify produced architecture
+        run: |
+          set -euo pipefail
+          LIB=out/ios16-cpu-probe/libMCLACPUCompilation.a
+          test -f "$LIB"
+          lipo -info "$LIB"
+          lipo -verify_arch arm64 "$LIB"
+          echo 'CPU foundation compiled. The private game AOT was not supplied or tested.'

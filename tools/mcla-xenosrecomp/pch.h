@@ -5,21 +5,19 @@
 #include <Windows.h>
 #endif
 
-#include <dxcapi.h>
-
+#include <algorithm>
 #include <bit>
 #include <cassert>
 #include <cstdint>
-#include <execution>
 #include <filesystem>
+#include <iterator>
 #include <map>
-#include <smolv.h>
 #include <fmt/core.h>
+#include <fmt/format.h>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
-#include <xxhash.h>
-#include <zstd.h>
 
 template<typename T>
 static T byteSwap(T value)
