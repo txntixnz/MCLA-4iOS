@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/ios16-air-recompile-probe.yml'
       - 'tools/ios16_extract_air.py'
+      - 'tools/ios16_air_compat.py'
+      - 'tools/probe_ios16_air.sh'
+      - 'tools/fixtures/ios16_air_probe.metal'
 permissions:
   contents: read
 jobs:
@@ -14,44 +17,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Compile the same public source directly for both targets
+      - name: Compare direct source compilation for both targets
+        run: bash tools/probe_ios16_air.sh out/air-compiler-probe
+      - name: Test restricted AIR adaptation through the Apple compiler
         run: |
-          set -euo pipefail
-          mkdir -p out/air-compiler-probe
-          cat > out/air-compiler-probe/synthetic.metal <<'METAL'
-          #include <metal_stdlib>
-          using namespace metal;
-          constant uint flags [[function_constant(0)]];
-          struct Heap { texture2d<float> tex; };
-          struct Samplers { sampler value; };
-          struct Constants { ulong address; };
-          struct Varyings { float4 position [[position]]; float2 uv; };
-          struct Attributes { float4 position [[attribute(0)]]; float2 uv [[attribute(1)]]; };
-          vertex Varyings vertexProbe(Attributes input [[stage_in]],
-                                     constant Constants& constants [[buffer(8)]]) {
-              float4 scale = *reinterpret_cast<device float4*>(constants.address);
-              return {input.position * scale, input.uv};
-          }
-          fragment float4 probe(Varyings input [[stage_in]],
-                                constant Heap* heap [[buffer(0)]],
-                                constant Samplers* samplers [[buffer(4)]],
-                                constant Constants& constants [[buffer(8)]]) {
-              float4 value = *reinterpret_cast<device float4*>(constants.address);
-              float4 color = heap[0].tex.sample(samplers[0].value, input.uv);
-              if (is_function_constant_defined(flags) && (flags & 1)) color = saturate(color);
-              return value * color;
-          }
-          METAL
-          for config in ios18 ios16; do
-            if [[ "$config" == ios18 ]]; then minimum=18.0; standard=metal3.1; else minimum=16.0; standard=metal3.0; fi
-            xcrun -sdk iphoneos metal -std="$standard" -mios-version-min="$minimum" \
-              -c out/air-compiler-probe/synthetic.metal -o "out/air-compiler-probe/$config.air"
-            xcrun -sdk iphoneos metal -std="$standard" -mios-version-min="$minimum" \
-              -S -emit-llvm out/air-compiler-probe/synthetic.metal -o "out/air-compiler-probe/$config.ll"
-            xcrun -sdk iphoneos metal -mios-version-min="$minimum" \
-              "out/air-compiler-probe/$config.air" -o "out/air-compiler-probe/$config.metallib"
-          done
-          diff -u out/air-compiler-probe/ios16.ll out/air-compiler-probe/ios18.ll > out/air-compiler-probe/targets.diff || test "$?" -eq 1
+          python3 tools/ios16_air_compat.py compile out/air-compiler-probe/ios18.metallib \
+            out/air-compiler-probe/experimental \
+            --baseline-proof out/air-compiler-probe/baseline-proof.json \
+            --allow-experimental-air-compat
       - name: Extract intact modern AIR and disassemble with Apple's compiler
         run: |
           set -euo pipefail
