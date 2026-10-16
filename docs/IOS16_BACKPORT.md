@@ -51,3 +51,7 @@ The dedicated Actions workflow `MCLA iOS 16 - launcher compilation` configures X
 ## Optional diagnostic IPA
 
 A successful launcher-only workflow uploads `MCLA-iOS16-LAUNCHER-ONLY-NO-GAME.ipa` as an Actions artifact. It is ad-hoc signed for testing on a compatible sideload/TrollStore setup. It has a distinct bundle identifier `com.txntixnz.mcla.ios16.preview`, so it does not overwrite a full-game MCLA installation. The UI may still display the default name MCLA. This is strictly a **non-playable native iOS 16 shell**; do not copy game files into it expecting races to work. The value of a device test is checking whether the launcher and basic Metal presenter start on an A15 phone.
+
+## On-device Metal test report
+
+The iOS 16 preview launcher shows `METAL READY` after the diagnostic shader pipelines compile and depth state initializes, otherwise `METAL CHECK`. A successful report confirms native test-pipeline setup, not the game’s title renderer. Export Logs now includes pipeline readiness, drawable dimensions, submitted/completed frames, and setup errors. Keep exported logs and game files out of the public repository.

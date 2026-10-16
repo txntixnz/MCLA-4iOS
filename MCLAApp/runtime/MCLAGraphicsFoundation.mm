@@ -586,6 +586,8 @@ void MCLAGraphicsGetReport(MCLAGraphicsReport* report) {
     os_unfair_lock_lock(&gPresenterLock);
     CAMetalLayer* layer = gBoundLayer;
     report->metalPresenterReady = layer && gMetalDevice && gCommandQueue;
+    report->diagnosticPipelineReady = gDiagnosticPipeline && gInlinePipeline &&
+        gDiagnosticDepthState && !gPipelineError[0];
     const CGSize drawableSize = layer ? layer.drawableSize : CGSizeZero;
     os_unfair_lock_unlock(&gPresenterLock);
 

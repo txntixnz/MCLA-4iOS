@@ -51,6 +51,8 @@ void MCLAGraphicsSetFSREnabled(bool enabled);
 
 typedef struct MCLAGraphicsReport {
     bool metalPresenterReady;
+    // Metal pipeline + depth resources compiled/created at runtime on device.
+    bool diagnosticPipelineReady;
     bool rexglueSourceStaged;
     bool nativeRendererCoreReady;
     bool xenosRuntimeLinked;

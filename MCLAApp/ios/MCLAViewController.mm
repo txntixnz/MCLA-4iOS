@@ -2005,8 +2005,9 @@ static void MCLARegisterGraphicsDefaults(void) {
     MCLAHostGetRuntimeReport(&runtime);
     const uint32_t selectedHeight = mcla::metal::RenderHeight((uint32_t)
         [NSUserDefaults.standardUserDefaults integerForKey:@"MCLARenderHeight"]);
-    [self.panel setGraphicsSummary:[NSString stringWithFormat:@"%up SCENE   /   FSR %@   /   METAL",
-        selectedHeight, [NSUserDefaults.standardUserDefaults boolForKey:@"MCLAFSREnabled"] ? @"On" : @"Off"]
+    [self.panel setGraphicsSummary:[NSString stringWithFormat:@"%up SCENE   /   FSR %@   /   METAL %@",
+        selectedHeight, [NSUserDefaults.standardUserDefaults boolForKey:@"MCLAFSREnabled"] ? @"On" : @"Off",
+        graphics.diagnosticPipelineReady ? @"READY" : @"CHECK"]
     ];
 
     // A controller-driven title still looks idle to UIKit. Keep only an
@@ -2437,6 +2438,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 
 - (void)exportLogs:(UIButton*)sender {
     MCLARuntimeReport runtime = {}; MCLAHostGetRuntimeReport(&runtime);
+    MCLAGraphicsReport graphics = {}; MCLAGraphicsGetReport(&graphics);
     if (self.exportingLogs || self.gameVisible || (runtime.running && !runtime.failed) || self.presentedViewController) return;
     self.exportingLogs = YES;
     sender.enabled = NO;
@@ -2451,11 +2453,16 @@ static void MCLARegisterGraphicsDefaults(void) {
     NSString* report = [NSString stringWithFormat:
         @"MCLA diagnostic export\nDate: %@\nVersion: %@ (%@)\nDevice: %s\niOS: %@\n"
          "Runtime: %s\nFailed: %d  Finished: %d  Entry reached: %d\nLaunch error: %@\nSettings: %@\n\n"
+         "Metal: presenter=%d, testPipeline=%d, drawable=%ux%u, submitted=%llu, completed=%llu\nMetal detail: %s\n\n"
          "Includes existing runtime logs and diagnostic text captures.\n"
          "For detailed startup logs, turn Graphics > Retail Mode off, reopen MCLA and reproduce the issue.\n",
         NSDate.date, info[@"CFBundleShortVersionString"], info[@"CFBundleVersion"],
         hardware.machine, UIDevice.currentDevice.systemVersion, runtime.detail,
-        runtime.failed, runtime.finished, runtime.entryReached, self.launchError ?: @"none", settings];
+        runtime.failed, runtime.finished, runtime.entryReached, self.launchError ?: @"none", settings,
+         graphics.metalPresenterReady, graphics.diagnosticPipelineReady,
+         graphics.drawableWidth, graphics.drawableHeight,
+         (unsigned long long)graphics.submittedFrames,
+         (unsigned long long)graphics.completedFrames, graphics.detail];
     NSURL* home = [NSURL fileURLWithPath:NSHomeDirectory() isDirectory:YES];
     NSURL* archive = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
         URLByAppendingPathComponent:[NSString stringWithFormat:@"MCLA-Logs-%@.zip", NSUUID.UUID.UUIDString]];
