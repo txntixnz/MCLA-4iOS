@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   rexglue-host-tools:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 50
     steps:
       - name: Checkout app source
