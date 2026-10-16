@@ -2582,8 +2582,11 @@ static void MCLARegisterGraphicsDefaults(void) {
     NSString* documents=NSSearchPathForDirectoriesInDomains(
         NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
     NSString* input=[documents stringByAppendingPathComponent:@"MCLA_ISO_Input"];
+    NSString* gameFolder=[documents stringByAppendingPathComponent:@"MCLA_Game_Files"];
     NSMutableArray<NSURL*>* local=[NSMutableArray array];
-    for(NSString* directory in @[input, documents]) {
+    // Stage 6 missed the directory the launcher itself asks players to use.
+    // Scan it directly. Avoid any UIDocumentPicker type-filtering on iOS 16.
+    for(NSString* directory in @[gameFolder, input, documents]) {
         NSArray<NSURL*>* found=[NSFileManager.defaultManager
             contentsOfDirectoryAtURL:[NSURL fileURLWithPath:directory isDirectory:YES]
             includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey]
@@ -2598,15 +2601,22 @@ static void MCLARegisterGraphicsDefaults(void) {
             if(regular.boolValue && !link.boolValue) [local addObject:candidate];
         }
     }
-    if (local.count==1) {
-        [self verifyLocalXboxFile:local.firstObject];
+    NSMutableArray<NSURL*>* isoCandidates=[NSMutableArray array];
+    for(NSURL* candidate in local) {
+        if([candidate.pathExtension.lowercaseString isEqualToString:@"iso"])
+            [isoCandidates addObject:candidate];
+    }
+    // If a single ISO is present, use it even when default.xex exists too.
+    NSArray<NSURL*>* choices = isoCandidates.count ? isoCandidates : local;
+    if (choices.count==1) {
+        [self verifyLocalXboxFile:choices.firstObject];
         return;
     }
-    if (local.count>1) {
+    if (choices.count>1) {
         UIAlertController* chooser=[UIAlertController alertControllerWithTitle:@"Choose Xbox game"
-            message:@"ISO files found in this app’s Documents folder. They will be read in place."
+            message:@"Detected locally stored Xbox game files. Select one to verify without moving or extracting it."
             preferredStyle:UIAlertControllerStyleActionSheet];
-        for(NSURL* file in [local subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)12,local.count))]) {
+        for(NSURL* file in [choices subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)12,choices.count))]) {
             __weak MCLAViewController* weakSelf=self;
             [chooser addAction:[UIAlertAction actionWithTitle:file.lastPathComponent
                 style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
@@ -2622,14 +2632,9 @@ static void MCLARegisterGraphicsDefaults(void) {
         return;
     }
     UIAlertController* prompt=[UIAlertController
-        alertControllerWithTitle:@"Move your ISO into MCLA"
-        message:@"iOS 16 is preventing the Files picker from selecting your ISO. Open Apple's Files app, choose On My iPhone → MCLA → MCLA_ISO_Input, and MOVE the Xbox 360 .iso there. Return here and tap Verify Game again. The app reads it directly without extracting or copying it."
+        alertControllerWithTitle:@"ISO not detected"
+        message:@"Place your Xbox 360 ISO in Files → On My iPhone → MCLA → MCLA_Game_Files (or MCLA_ISO_Input), then tap Verify Game again. This build reads the ISO directly: no Files picker and no extraction."
         preferredStyle:UIAlertControllerStyleAlert];
-    [prompt addAction:[UIAlertAction actionWithTitle:@"Browse Files (alternative)"
-        style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
-            (void)action;
-            [self openXboxFilePicker];
-        }]];
     [prompt addAction:[UIAlertAction actionWithTitle:@"OK"
         style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:prompt animated:YES completion:nil];

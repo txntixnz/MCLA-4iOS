@@ -71,3 +71,7 @@ The iOS 16 preview Verify Game picker now accepts file items, including `.iso`. 
 ## Stage 6 — iOS 16 Files-picker bypass
 
 The Stage 5 picker was still blocking selection on this device. The iOS 16 launcher creates an app-owned `Documents/MCLA_ISO_Input` folder and **Verify Game** scans that folder and the app's Documents root directly. The user should use Apple's Files app to **MOVE** their Xbox 360 Complete Edition `.iso` into **On My iPhone → MCLA → MCLA_ISO_Input**; return to MCLA and tap **Verify Game**. A single ISO is checked automatically; multiple local ISOs present a selection sheet. This avoids the system import picker and verifies the original ISO in place, with bounded read-only IO and no full-disc extraction. The picker is retained as an optional fallback only. This is still an unplayable diagnostic launcher without AOT game code.
+
+## Stage 7 — existing game-folder auto detection
+
+The read-only **Verify Game** button now scans the actual app-owned `Documents/MCLA_Game_Files` first, then `Documents/MCLA_ISO_Input` and the Documents root. No picker, import, extraction, or move is needed for an ISO already in the normal game-data folder. A single ISO takes priority over any extracted `default.xex`. If no relevant file is found, the UI names the scanned locations instead of sending the user back to an iOS 16 Files picker that cannot select ISO files. This remains a native iOS 16 diagnostic shell, not playable game code.
