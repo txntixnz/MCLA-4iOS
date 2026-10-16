@@ -1,45 +1,16 @@
 #!/usr/bin/env python3
-"""Host-only Linux libc++18 code generator compatibility workaround.
+"""Reuse MCLA's existing floating parser fallback for Linux libc++18 host codegen.
 
-The original game runtime sources remain untouched in the repository.
+The public iOS dependency patch already includes this implementation for
+REX_PLATFORM_IOS. Do not duplicate or replace its parser.
 """
 from pathlib import Path
 
 path = Path("theft4-foundation/glue/rexglue-sdk-main/include/rex/string/numeric.h")
-s = path.read_text()
-header = "#include <charconv>"
-assert s.count(header) == 1, "Unexpected pinned SDK header"
-s = s.replace(header, header + "\n#include <cerrno>\n#include <cstdlib>\n#include <type_traits>")
-old = """    auto [p, error] = std::from_chars(range.data(), range.data() + range.size(), result,
-                                      std::chars_format::general);
-    // TODO(gibbed): do something more with errors?
-    if (error != std::errc()) {
-      assert_always();
-      return T();
-    }"""
-new = """#if defined(__linux__) && defined(_LIBCPP_VERSION)
-    // Linux codegen only: libc++18 lacks floating-point from_chars.
-    // Prefer fixed C numeric locale in CI; reject partial strings and overflow.
-    std::string input(range);
-    char* end = nullptr;
-    errno = 0;
-    if constexpr (std::is_same_v<T, float>) {
-      result = std::strtof(input.c_str(), &end);
-    } else {
-      result = std::strtod(input.c_str(), &end);
-    }
-    if (errno == ERANGE || end == input.c_str() || end != input.c_str() + input.size()) {
-      assert_always();
-      return T();
-    }
-#else
-    auto [p, error] = std::from_chars(range.data(), range.data() + range.size(), result,
-                                      std::chars_format::general);
-    if (error != std::errc()) {
-      assert_always();
-      return T();
-    }
-#endif"""
-assert s.count(old) == 1, "Unexpected pinned SDK floating-point parser source"
-path.write_text(s.replace(old, new))
-print("Applied pinned host-only libc++18 float parsing fallback")
+text = path.read_text()
+old = "#if REX_PLATFORM_IOS\n  // libc++ marks floating-point from_chars as iOS 26+"
+new = ("#if REX_PLATFORM_IOS || (defined(__linux__) && defined(_LIBCPP_VERSION))\n"
+       "  // libc++ marks floating-point from_chars as iOS 26+")
+assert text.count(old) == 1, "Expected patched ReXGlue floating parser guard not found"
+path.write_text(text.replace(old, new))
+print("Shared the existing iOS floating parser fallback with Linux libc++18 host codegen")
