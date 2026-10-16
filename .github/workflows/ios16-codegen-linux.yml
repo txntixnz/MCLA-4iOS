@@ -59,6 +59,19 @@ jobs:
             "$sdk/inja" "$sdk/o1heap"
       - name: Apply pinned project compatibility patches
         run: sh tools/apply_dependency_patches.sh
+      - name: Backport libc++ clock_cast guard for Linux host-only compiler
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path("theft4-foundation/glue/rexglue-sdk-main/include/rex/chrono/chrono.h")
+          original=path.read_text()
+          needle="#ifdef __APPLE__\n// Apple libc++ does not expose clock_time_conversion or clock_cast."
+          replacement=("#if defined(__APPLE__) || (defined(__linux__) && defined(_LIBCPP_VERSION))\n"
+                       "// Linux libc++ 18 also lacks clock_time_conversion / clock_cast.")
+          assert original.count(needle) == 1, "Pinned ReXGlue chrono shim changed: inspect manually."
+          path.write_text(original.replace(needle, replacement))
+          print("Enabled existing pinned clock_cast shim for Linux+libc++ host")
+          PY
       - name: Configure Linux host ReXGlue generator
         run: |
           cmake -S MCLAApp/tools/rexglue_host -B MCLAApp/out/linux-codegen -G Ninja \
