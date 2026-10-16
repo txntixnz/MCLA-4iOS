@@ -1,0 +1,57 @@
+name: MCLA iOS 16 - synthetic AIR compiler experiment
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios16-native-backport]
+    paths:
+      - '.github/workflows/ios16-air-recompile-probe.yml'
+      - 'tools/ios16_extract_air.py'
+permissions:
+  contents: read
+jobs:
+  synthetic-air-only:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile a public synthetic shader for iOS 18
+        run: |
+          set -euo pipefail
+          mkdir -p out/air-compiler-probe
+          cat > out/air-compiler-probe/synthetic.metal <<'METAL'
+          #include <metal_stdlib>
+          using namespace metal;
+          struct Heap { texture2d<float> tex; };
+          struct Constants { ulong address; };
+          fragment float4 probe(constant Heap* heap [[buffer(0)]],
+                                constant Constants& constants [[buffer(8)]]) {
+              float4 value = *reinterpret_cast<device float4*>(constants.address);
+              return value * heap[0].tex.read(uint2(0));
+          }
+          METAL
+          xcrun -sdk iphoneos metal -std=metal3.1 -mios-version-min=18.0 \
+            -c out/air-compiler-probe/synthetic.metal -o out/air-compiler-probe/original.air
+          xcrun -sdk iphoneos metal -mios-version-min=18.0 \
+            out/air-compiler-probe/original.air -o out/air-compiler-probe/original.metallib
+      - name: Extract unchanged intermediate representation
+        run: python3 tools/ios16_extract_air.py out/air-compiler-probe/original.metallib out/air-compiler-probe/modules
+      - name: Test whether Apple accepts LLVM AIR as compiler input for iOS 16
+        run: |
+          set -euo pipefail
+          xcrun -sdk iphoneos metal -x ir -mios-version-min=16.0 \
+            -c out/air-compiler-probe/modules/module-000.bc -o out/air-compiler-probe/recompiled.air
+          xcrun -sdk iphoneos metal -mios-version-min=16.0 \
+            out/air-compiler-probe/recompiled.air -o out/air-compiler-probe/recompiled.metallib
+      - name: Inspect the emitted deployment target
+        env:
+          MCLA_IOS_MIN: '16.0'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0,'tools')
+          from mcla_metal_target import validate_library
+          p=Path('out/air-compiler-probe/recompiled.metallib')
+          print('Compiler-emitted target:',validate_library(p.read_bytes(),'16.0'))
+          print('Synthetic compiler experiment only; no game shader or device execution tested.')
+          PY
