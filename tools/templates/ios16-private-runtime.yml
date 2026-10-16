@@ -1,0 +1,150 @@
+# This workflow and all produced game-derived artifacts belong in a PRIVATE repository.
+name: MCLA private iOS 16 full native runtime candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ios16-private-runtime.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  link-native-runtime:
+    if: ${{ github.event.repository.private == true }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Checkout private AOT source headers
+        uses: actions/checkout@v4
+        with:
+          path: private-inputs
+      - name: Checkout pinned public integration source
+        uses: actions/checkout@v4
+        with:
+          repository: txntixnz/MCLA-4iOS
+          ref: 7775db3e6cd4fa6760b68817f2de0ada03af1660
+          path: source
+          submodules: false
+      - name: Initialize pinned foundation dependencies
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 larecomp theft4-foundation
+          sdk=glue/rexglue-sdk-main/thirdparty
+          git -C theft4-foundation submodule update --init --depth 1 -- \
+            "$sdk/cli11" "$sdk/libmspack" "$sdk/FFmpeg" \
+            "$sdk/tomlplusplus" "$sdk/simde" "$sdk/xxHash" \
+            "$sdk/spdlog" "$sdk/fmt" "$sdk/snappy" "$sdk/utfcpp" \
+            "$sdk/imgui" "$sdk/sdl3" "$sdk/inja" "$sdk/o1heap" \
+            "$sdk/vulkan-headers"
+          sh tools/apply_dependency_patches.sh
+      - name: Download the two previously validated PRIVATE build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download 38947456453 --repo "$GITHUB_REPOSITORY" \
+            --name MCLA-Private-iOS16-ARM64-CPU-ONLY --dir private-cpu
+          gh run download 38950823168 --repo "$GITHUB_REPOSITORY" \
+            --name MCLA-Private-iOS16-EXPERIMENTAL-Shaders --dir private-shaders
+      - name: Verify private inputs and stage complete native build resources
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          python3 - <<'PYTHON'
+          import hashlib, json, pathlib, shutil, zipfile
+          root = pathlib.Path.cwd()
+          archive = root / 'private-cpu/libMCLACPUCompilation.a'
+          if hashlib.sha256(archive.read_bytes()).hexdigest() != '5d872c7ab9c68ebe3c46dc0e3dc70f9abad2e03e9cf67c393c3ff8045d483b40':
+              raise ValueError('CPU archive differs from the independently audited result')
+          target = root / 'private-aot'
+          with zipfile.ZipFile(root / 'private-inputs/MCLA_iOS16_Stage9_PRIVATE_AOT.zip') as package:
+              for item in package.infolist():
+                  if not (target / item.filename).resolve().is_relative_to(target.resolve()): raise ValueError('Unsafe archive path')
+              package.extractall(target)
+          shutil.copytree(target / 'generated', root / 'source/MCLAApp/generated', dirs_exist_ok=True)
+          shaders = root / 'private-shaders/private-shader-rebuild'
+          report = json.loads((shaders / 'compatibility-report.json').read_text())
+          if report['compiler_passes'] != 604 or report['rejections'] != 0: raise ValueError('Incomplete shader rebuild')
+          for item in report['results']:
+              path = shaders / 'libraries' / item['library']
+              if hashlib.sha256(path.read_bytes()).hexdigest() != item['output_sha256']: raise ValueError('Shader hash mismatch')
+          artifacts = root / 'source/artifacts'
+          shutil.copytree(shaders / 'libraries/MCLAMetalShaders', artifacts / 'mcla-metal-shaders', dirs_exist_ok=True)
+          (artifacts / 'mcla-metal-upscale').mkdir(parents=True, exist_ok=True)
+          shutil.copyfile(shaders / 'libraries/MCLAFsr.metallib', artifacts / 'mcla-metal-upscale/MCLAFsr.metallib')
+          shutil.copytree(shaders / 'reference-metadata', artifacts / 'mcla-native-metadata', dirs_exist_ok=True)
+          flat = root / 'private-reflection'; flat.mkdir()
+          for directory in (shaders / 'modules/MCLAMetalShaders').iterdir():
+              shutil.copyfile(directory / 'module-000.ll', flat / (directory.name + '.000.ll'))
+          PYTHON
+          python3 private-aot/verify_private_aot.py private-aot
+          python3 source/tools/ios16_verify_aot_archive.py private-cpu/libMCLACPUCompilation.a --json out/arm64_archive_audit.json
+          python3 source/tools/ios16_restore_shader_info.py private-reflection \
+            source/MCLAApp/generated/mcla_metal_shader_info.h --report out/shader-interface-audit.json
+      - name: Configure the complete native iOS 16 device application
+        run: |
+          set -euo pipefail
+          cmake -S source/MCLAApp -B private-runtime-build -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_BUILD_TYPE=Release -DMCLA_RUNTIME_ENABLED=ON -DMCLA_DIRECT_METAL=ON \
+            -DMCLA_ENABLE_XENOS_VULKAN=OFF -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DMCLA_DEVELOPMENT_TEAM= \
+            -DMCLA_PREBUILT_AOT_ARCHIVE="$GITHUB_WORKSPACE/private-cpu/libMCLACPUCompilation.a" \
+            -DMCLA_BUNDLE_IDENTIFIER_OVERRIDE=com.txntixnz.mcla.ios16.preview
+      - name: Compile and link the actual title runtime, renderer, audio and input
+        run: |
+          set -euo pipefail
+          cmake --build private-runtime-build --config Release --target MCLAApp --parallel 4 > out/native-build.log 2>&1 || {
+            tail -n 150 out/native-build.log
+            exit 1
+          }
+          tail -n 25 out/native-build.log
+      - name: Audit and package a PRIVATE experimental TrollStore candidate
+        run: |
+          set -euo pipefail
+          APP=private-runtime-build/Release-iphoneos/MCLAApp.app
+          test -f "$APP/MCLAApp"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '16.0'
+          lipo "$APP/MCLAApp" -verify_arch arm64
+          xcrun vtool -show-build "$APP/MCLAApp" | tee out/application-target.txt
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName MCLA iOS16 Native Test' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 13' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :MCLABringupProfile string ios16-native-stage13' "$APP/Info.plist"
+          mkdir -p "$APP/OpenSourceNotices"
+          cp -R source/licenses "$APP/OpenSourceNotices/"
+          cp source/LICENSE source/CREDITS.md source/THIRD_PARTY_NOTICES.md "$APP/OpenSourceNotices/"
+          python3 - <<'PYTHON'
+          import pathlib, plistlib, sys
+          sys.path.insert(0, 'source/tools')
+          from mcla_metal_target import validate_library
+          app = pathlib.Path('private-runtime-build/Release-iphoneos/MCLAApp.app')
+          libraries = list(app.rglob('*.metallib'))
+          if len(libraries) != 604: raise ValueError(f'Wrong library count: {len(libraries)}')
+          for path in libraries: validate_library(path.read_bytes(), '16.0')
+          entitlements = {'get-task-allow': True,
+              'com.apple.developer.kernel.increased-memory-limit': True,
+              'com.apple.developer.kernel.extended-virtual-addressing': True}
+          pathlib.Path('out/native-test.entitlements').write_bytes(plistlib.dumps(entitlements))
+          print('Verified 604 iOS 16 Metal libraries in the complete native app.')
+          PYTHON
+          codesign --force --sign - --timestamp=none --entitlements out/native-test.entitlements "$APP"
+          codesign --verify --strict "$APP"
+          mkdir -p package/Payload
+          ditto "$APP" package/Payload/MCLAApp.app
+          (cd package && zip -qry ../out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa Payload)
+          unzip -t out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa | tail -1
+          python3 source/tools/ios16_verify_runtime_ipa.py out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa \
+            --shader-evidence private-shaders/private-shader-rebuild/compatibility-report.json \
+            --json out/runtime_ipa_audit.json
+          shasum -a 256 out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa > out/ipa-sha256.txt
+          printf '%s\n' 'EXPERIMENTAL FULL RUNTIME: native game code and rebuilt shaders linked. Device rendering/gameplay untested. Conservative resource masks may reduce performance.' > out/STATUS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MCLA-Private-iOS16-Native-Runtime-Candidate
+          path: out
+          compression-level: 9
+          retention-days: 7
+          if-no-files-found: error
