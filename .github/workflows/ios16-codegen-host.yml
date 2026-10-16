@@ -40,6 +40,26 @@ jobs:
               assert actual==lock[key]['commit'],(key,actual,lock[key]['commit'])
               print(f'{key}: verified pinned commit {actual}')
           PY
+      - name: Fetch pinned ReXGlue SDK vendored libraries
+        run: |
+          set -euo pipefail
+          sdk=glue/rexglue-sdk-main/thirdparty
+          git -C theft4-foundation submodule sync
+          git -C theft4-foundation submodule update --init --depth 1 -- \
+            "$sdk/cli11" \
+            "$sdk/libmspack" \
+            "$sdk/FFmpeg" \
+            "$sdk/tomlplusplus" \
+            "$sdk/simde" \
+            "$sdk/xxHash" \
+            "$sdk/spdlog" \
+            "$sdk/fmt" \
+            "$sdk/snappy" \
+            "$sdk/utfcpp" \
+            "$sdk/imgui" \
+            "$sdk/sdl3" \
+            "$sdk/inja" \
+            "$sdk/o1heap"
       - name: Apply pinned Apple compatibility patches
         run: sh tools/apply_dependency_patches.sh
       - name: Install upstream LLVM (ReXGlue requires Clang 18+)
