@@ -22,8 +22,17 @@ jobs:
       - name: Install native compiler and build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-18 lld-18 ninja-build libssl-dev
+          sudo apt-get install -y -qq clang-18 lld-18 ninja-build libssl-dev g++-14
           clang++-18 --version
+          # Pinned SDK requires C++23 std::expected (GCC 13 headers can lack it).
+          g++-14 --version
+          cat > /tmp/rex-expected.cpp <<'CPP'
+          #include <expected>
+          std::expected<int, int> probe() { return 42; }
+          int main() { return probe().value() == 42 ? 0 : 1; }
+          CPP
+          clang++-18 -std=c++23 /tmp/rex-expected.cpp -o /tmp/rex-expected
+          /tmp/rex-expected
       - name: Initialize pinned game codegen sources
         run: |
           set -euo pipefail
