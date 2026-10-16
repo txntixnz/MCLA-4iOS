@@ -42,16 +42,25 @@ jobs:
           PY
       - name: Apply pinned Apple compatibility patches
         run: sh tools/apply_dependency_patches.sh
+      - name: Install upstream LLVM (ReXGlue requires Clang 18+)
+        run: |
+          brew install llvm
+          "$(brew --prefix llvm)/bin/clang++" --version
       - name: Inspect Apple host toolchain
         run: |
           xcodebuild -version
           cmake --version
-          clang++ --version
           ninja --version
+          "$(brew --prefix llvm)/bin/clang++" --version
       - name: Configure headless ReXGlue native code generator
         run: |
+          LLVM="$(brew --prefix llvm)"
           cmake -S MCLAApp/tools/rexglue_host -B MCLAApp/out/host-tools -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$LLVM/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM/bin/clang++" \
+            -DCMAKE_OBJC_COMPILER="$LLVM/bin/clang" \
+            -DCMAKE_OBJCXX_COMPILER="$LLVM/bin/clang++"
       - name: Build actual ReXGlue codegen executable
         run: |
           cmake --build MCLAApp/out/host-tools --target rexglue --parallel 4
