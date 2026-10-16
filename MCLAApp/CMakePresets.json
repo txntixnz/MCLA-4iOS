@@ -66,6 +66,20 @@
         "MCLA_SINGLE_TILE_LAB": "OFF",
         "MCLA_SMAA_LAB": "ON"
       }
+    },
+    {
+      "name": "ios16-device-release",
+      "displayName": "Experimental MCLA iOS 16 native ARM64 build",
+      "generator": "Xcode",
+      "binaryDir": "${sourceDir}/../out/build/ios16-device-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_SYSTEM_NAME": "iOS",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "16.0",
+        "CMAKE_OSX_SYSROOT": "iphoneos",
+        "MCLA_RUNTIME_ENABLED": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -73,25 +87,41 @@
       "name": "ios-simulator-release",
       "configurePreset": "ios-simulator-release",
       "configuration": "Release",
-      "targets": ["MCLAApp"]
+      "targets": [
+        "MCLAApp"
+      ]
     },
     {
       "name": "ios-device-release",
       "configurePreset": "ios-device-release",
       "configuration": "Release",
-      "targets": ["MCLAApp"]
+      "targets": [
+        "MCLAApp"
+      ]
     },
     {
       "name": "ios-device-single-tile-lab",
       "configurePreset": "ios-device-single-tile-lab",
       "configuration": "Release",
-      "targets": ["MCLAApp"]
+      "targets": [
+        "MCLAApp"
+      ]
     },
     {
       "name": "ios-device-smaa-lab",
       "configurePreset": "ios-device-smaa-lab",
       "configuration": "Release",
-      "targets": ["MCLAApp"]
+      "targets": [
+        "MCLAApp"
+      ]
+    },
+    {
+      "name": "ios16-device-release",
+      "configurePreset": "ios16-device-release",
+      "configuration": "Release",
+      "targets": [
+        "MCLAApp"
+      ]
     }
   ]
 }

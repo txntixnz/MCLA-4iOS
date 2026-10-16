@@ -1,0 +1,43 @@
+# iOS 16.0 / A15 native recompilation experiment
+
+**Status: untested source backport, no playable IPA.**
+
+Goal: port the Xbox 360 Complete Edition static-recompilation build to native ARM64/Metal on iPhone 13 Pro Max running iOS 16.0 and install it through TrollStore. No Xbox 360 emulator is used at runtime, but title-specific compatibility services remain.
+
+## What this branch contains
+
+- Opt-in `ios16-device-release` CMake preset; upstream `ios-device-release` remains iOS 18.
+- Xcode deployment target matches the preset instead of being hardcoded to 18.0.
+- `MCLA_IOS_MIN=16.0` selects Metal 3.0 and cache stamps isolated from iOS 18 builds. Default remains iOS 18 / Metal 3.1.
+- An Apple-hosted CI smoke test compiles a tiny *real* Metal library with deployment target 16.0 and validates its embedded target metadata.
+- A preflight tool that reports missing game-derived AOT/shader inputs; it does not pretend a clean checkout builds the game.
+
+## Run initial compiler test
+
+In GitHub Actions, enable Actions if prompted, then run **MCLA iOS 16 - Metal 3.0 smoke test** on branch `ios16-native-backport`. A passing green check demonstrates only the SDK/compiler/deployment-target policy—not game launch or renderer compatibility.
+
+For local testing on macOS with Xcode:
+
+```sh
+MCLA_IOS_MIN=16.0 python3 tools/test_mcla_metal_targets.py
+python3 tools/ios16_preflight.py
+```
+
+## Full title build prerequisites (not bundled)
+
+The upstream source snapshot is **not** a clean disc-to-IPA pipeline. It excludes generated AOT code, title shader sources and offline shader caches. Those must be generated from the user's own compatible Xbox 360 Complete Edition game copy without committing or distributing game data.
+
+Once the inputs exist on a Mac:
+
+```sh
+sh tools/apply_dependency_patches.sh
+MCLA_IOS_MIN=16.0 python3 tools/build_mcla_metal_shaders.py
+MCLA_IOS_MIN=16.0 python3 tools/build_mcla_fsr.py
+MCLA_CMAKE="$(command -v cmake)" sh tools/generate_xcode.sh ios16-device YOUR_APPLE_TEAM_ID
+cmake --build out/build/ios16-device-release --config Release --target MCLAApp
+python3 tools/ios16_preflight.py --app out/build/ios16-device-release/Release-iphoneos/MCLAApp.app
+```
+
+Some MSL3.1-only shader constructs, runtime API availability checks or graphics features may require more work. Existing iOS 18 `.metallib` assets cannot be reused unchanged. The pinned tools may also rely on private locally-generated intermediate shader data. Do not simply change Info.plist or re-sign the iOS 18 IPA. No performance claims are made for A15.
+
+Based on upstream [DEVELOPMENT.md](../docs/DEVELOPMENT.md) and [TECHNICAL_NOTES.md](../docs/TECHNICAL_NOTES.md). Preserve GPL-3.0 licensing and credits. Game data remains private.

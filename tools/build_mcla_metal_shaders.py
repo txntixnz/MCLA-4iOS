@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
-from mcla_metal_target import METAL_CACHE_POLICY, METAL_DEPLOYMENT_FLAGS, validate_library
+from mcla_metal_target import METAL_CACHE_POLICY, METAL_DEPLOYMENT_FLAGS, METAL_LANGUAGE_STANDARD, validate_library
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -148,7 +148,7 @@ def compile_shader(path):
         src.write_text(text)
         args = ['xcrun', '-sdk', 'iphoneos', 'metal', '-w', '-O2',
                 '-fmodules-cache-path=/private/tmp/mcla-metal-module-cache',
-                '-std=metal3.1', *METAL_DEPLOYMENT_FLAGS, '-D__air__', '-DGTA4_RECOMP']
+                f'-std={METAL_LANGUAGE_STANDARD}', *METAL_DEPLOYMENT_FLAGS, '-D__air__', '-DGTA4_RECOMP']
         if stage == 'ps': args.append('-DXENOS_RECOMP_PIXEL_SHADER')
         result = subprocess.run(args + ['-c', str(src), '-o', str(air)], env=ENV, capture_output=True, text=True)
         if result.returncode == 0:

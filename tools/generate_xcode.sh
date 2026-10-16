@@ -19,8 +19,11 @@ case "$mode" in
     device)
         preset=ios-device-release
         ;;
+    ios16-device)
+        preset=ios16-device-release
+        ;;
     *)
-        echo "Usage: $0 [simulator|device] [APPLE_TEAM_ID]" >&2
+        echo "Usage: $0 [simulator|device|ios16-device] [APPLE_TEAM_ID]" >&2
         exit 2
         ;;
 esac

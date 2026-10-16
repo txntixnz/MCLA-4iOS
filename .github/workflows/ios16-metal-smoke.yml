@@ -1,0 +1,33 @@
+name: MCLA iOS 16 - Metal 3.0 smoke test
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios16-native-backport]
+    paths:
+      - 'tools/mcla_metal_target.py'
+      - 'tools/test_mcla_metal_targets.py'
+      - 'tools/verify_mcla_metal_targets.py'
+      - '.github/workflows/ios16-metal-smoke.yml'
+jobs:
+  metal-ios16:
+    runs-on: macos-15
+    env:
+      MCLA_IOS_MIN: '16.0'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Versions
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          python3 --version
+      - name: Install Metal compiler if necessary
+        run: |
+          if ! xcrun --sdk iphoneos --find metal >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: Syntax check iOS 16 policy and tests
+        run: |
+          python3 -m py_compile tools/mcla_metal_target.py tools/test_mcla_metal_targets.py tools/verify_mcla_metal_targets.py
+      - name: Compile actual iOS 16 Metal library and audit deployment
+        run: python3 tools/test_mcla_metal_targets.py

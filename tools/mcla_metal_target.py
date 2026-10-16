@@ -1,10 +1,14 @@
 """Shared deployment policy for every offline MCLA Metal library."""
+import os
 import re
 
-MINIMUM_IOS = '18.0'
+MINIMUM_IOS = os.environ.get('MCLA_IOS_MIN', '18.0')
+if MINIMUM_IOS not in ('16.0', '18.0'):
+    raise ValueError(f'Unsupported MCLA_IOS_MIN={MINIMUM_IOS!r}; expected 16.0 or 18.0')
+METAL_LANGUAGE_STANDARD = 'metal3.0' if MINIMUM_IOS == '16.0' else 'metal3.1'
 METAL_DEPLOYMENT_FLAGS = [f'-mios-version-min={MINIMUM_IOS}']
 # Include the target in title-shader stamps so SDK-default libraries cannot be reused.
-METAL_CACHE_POLICY = f'mcla-metal-v2-ios{MINIMUM_IOS}-metal3.1\n'
+METAL_CACHE_POLICY = f'mcla-metal-v3-ios{MINIMUM_IOS}-{METAL_LANGUAGE_STANDARD}\n'
 
 
 def version_tuple(value):
