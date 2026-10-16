@@ -949,6 +949,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 @property(nonatomic, strong) NSURL* saveExportURL;
 @property(nonatomic, assign) BOOL importingSaveArchive;
 @property(nonatomic, assign) BOOL verifyingExecutable;
+@property(nonatomic, assign) BOOL verificationRunning;
 @property(nonatomic, strong) UIAlertController* pendingSaveAlert;
 @property(nonatomic, copy) void (^pendingSaveConfirm)(void);
 @property(nonatomic, copy) void (^pendingSaveCancel)(void);
@@ -999,6 +1000,17 @@ static void MCLARegisterGraphicsDefaults(void) {
         (uint32_t)MAX(nativePixels.width, nativePixels.height),
         (uint32_t)MIN(nativePixels.width, nativePixels.height), nativeAspect);
     [self prepareGameDataFolderIfNeeded];
+#if !MCLA_RUNTIME_ENABLED
+    // Files exposes this directory to the user. Checking an ISO placed here
+    // bypasses system file-provider type filtering on older iOS releases.
+    NSString* documents = NSSearchPathForDirectoriesInDomains(
+        NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    if (documents.length) {
+        NSString* isoInput = [documents stringByAppendingPathComponent:@"MCLA_ISO_Input"];
+        [NSFileManager.defaultManager createDirectoryAtPath:isoInput
+            withIntermediateDirectories:YES attributes:nil error:nil];
+    }
+#endif
 
     self.metalView = [[MCLAMetalView alloc] initWithFrame:CGRectZero];
     self.metalView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -2527,17 +2539,100 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self presentViewController:navigation animated:YES completion:nil];
 }
 
-- (void)verifyXboxExecutable:(UIButton*)sender {
-    (void)sender;
-    if (self.gameVisible || self.launchRequested ||
-        self.presentedViewController) return;
+- (void)verifyLocalXboxFile:(NSURL*)selected {
+    if (!selected || self.verificationRunning) return;
+    self.verificationRunning = YES;
+    self.detailLabel.text = @"VERIFYING XBOX 360 GAME…";
+    __weak MCLAViewController* weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        BOOL securityScope = [selected startAccessingSecurityScopedResource];
+        BOOL verified = NO;
+        NSString* message = MCLAVerifySelectedExecutable(selected, &verified);
+        if (securityScope) [selected stopAccessingSecurityScopedResource];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MCLAViewController* owner = weakSelf;
+            if (!owner) return;
+            owner.verificationRunning = NO;
+            if (!owner.presentedViewController)
+                [owner showSaveMessage:verified ? @"Game executable verified" : @"ISO compatibility check"
+                               detail:message];
+        });
+    });
+}
+
+- (void)openXboxFilePicker {
+    if (self.presentedViewController) return;
     self.verifyingExecutable = YES;
-    // iOS Files often classifies an ISO outside UTTypeData.
+    // The file picker remains a fallback only; some iOS 16 providers disable
+    // .iso selection regardless of the broad UTType filter.
+    NSMutableArray<UTType*>* formats=[NSMutableArray arrayWithObjects:UTTypeItem,UTTypeData, nil];
+    UTType* isoType=[UTType typeWithFilenameExtension:@"iso" conformingToType:UTTypeData];
+    if (isoType) [formats addObject:isoType];
     UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
-        initForOpeningContentTypes:@[UTTypeItem] asCopy:NO];
+        initForOpeningContentTypes:formats asCopy:NO];
+    picker.shouldShowFileExtensions = YES;
     picker.delegate = self;
     picker.modalPresentationStyle = UIModalPresentationFormSheet;
     [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)verifyXboxExecutable:(UIButton*)sender {
+    if (self.gameVisible || self.launchRequested || self.verificationRunning ||
+        self.presentedViewController) return;
+    NSString* documents=NSSearchPathForDirectoriesInDomains(
+        NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+    NSString* input=[documents stringByAppendingPathComponent:@"MCLA_ISO_Input"];
+    NSMutableArray<NSURL*>* local=[NSMutableArray array];
+    for(NSString* directory in @[input, documents]) {
+        NSArray<NSURL*>* found=[NSFileManager.defaultManager
+            contentsOfDirectoryAtURL:[NSURL fileURLWithPath:directory isDirectory:YES]
+            includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey]
+            options:NSDirectoryEnumerationSkipsHiddenFiles error:nil];
+        for(NSURL* candidate in found) {
+            NSString* ext=candidate.pathExtension.lowercaseString;
+            if (![ext isEqualToString:@"iso"] &&
+                ![candidate.lastPathComponent.lowercaseString isEqualToString:@"default.xex"]) continue;
+            NSNumber* regular=nil; NSNumber* link=nil;
+            [candidate getResourceValue:&regular forKey:NSURLIsRegularFileKey error:nil];
+            [candidate getResourceValue:&link forKey:NSURLIsSymbolicLinkKey error:nil];
+            if(regular.boolValue && !link.boolValue) [local addObject:candidate];
+        }
+    }
+    if (local.count==1) {
+        [self verifyLocalXboxFile:local.firstObject];
+        return;
+    }
+    if (local.count>1) {
+        UIAlertController* chooser=[UIAlertController alertControllerWithTitle:@"Choose Xbox game"
+            message:@"ISO files found in this app’s Documents folder. They will be read in place."
+            preferredStyle:UIAlertControllerStyleActionSheet];
+        for(NSURL* file in [local subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)12,local.count))]) {
+            __weak MCLAViewController* weakSelf=self;
+            [chooser addAction:[UIAlertAction actionWithTitle:file.lastPathComponent
+                style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+                    (void)action;
+                    [weakSelf verifyLocalXboxFile:file];
+                }]];
+        }
+        [chooser addAction:[UIAlertAction actionWithTitle:@"Cancel"
+            style:UIAlertActionStyleCancel handler:nil]];
+        chooser.popoverPresentationController.sourceView=sender ?: self.view;
+        chooser.popoverPresentationController.sourceRect=sender ? sender.bounds : self.view.bounds;
+        [self presentViewController:chooser animated:YES completion:nil];
+        return;
+    }
+    UIAlertController* prompt=[UIAlertController
+        alertControllerWithTitle:@"Move your ISO into MCLA"
+        message:@"iOS 16 is preventing the Files picker from selecting your ISO. Open Apple's Files app, choose On My iPhone → MCLA → MCLA_ISO_Input, and MOVE the Xbox 360 .iso there. Return here and tap Verify Game again. The app reads it directly without extracting or copying it."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [prompt addAction:[UIAlertAction actionWithTitle:@"Browse Files (alternative)"
+        style:UIAlertActionStyleDefault handler:^(UIAlertAction* action) {
+            (void)action;
+            [self openXboxFilePicker];
+        }]];
+    [prompt addAction:[UIAlertAction actionWithTitle:@"OK"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:prompt animated:YES completion:nil];
 }
 
 - (void)exportLogs:(UIButton*)sender {
@@ -2672,21 +2767,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     if (self.verifyingExecutable) {
         self.verifyingExecutable = NO;
         NSURL* picked = urls.firstObject;
-        if (!picked) return;
-        __weak MCLAViewController* weakSelf = self;
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-            BOOL scoped = [picked startAccessingSecurityScopedResource];
-            BOOL supported = NO;
-            NSString* message = MCLAVerifySelectedExecutable(picked, &supported);
-            if (scoped) [picked stopAccessingSecurityScopedResource];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                MCLAViewController* owner = weakSelf;
-                if (owner && !owner.presentedViewController) {
-                    [owner showSaveMessage:supported ? @"Game executable verified" : @"Executable check"
-                                   detail:message];
-                }
-            });
-        });
+        if(picked) [self verifyLocalXboxFile:picked];
         return;
     }
     if (!self.importingSaveArchive) {
