@@ -54,7 +54,8 @@ jobs:
         run: |
           cmake -S MCLAApp/tools/rexglue_host -B MCLAApp/out/linux-codegen -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+            -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DCMAKE_C_FLAGS=-march=x86-64-v3 -DCMAKE_CXX_FLAGS=-march=x86-64-v3
       - name: Compile native Linux game code generator
         run: cmake --build MCLAApp/out/linux-codegen --target rexglue --parallel 4
       - name: Validate host binary and CLI
