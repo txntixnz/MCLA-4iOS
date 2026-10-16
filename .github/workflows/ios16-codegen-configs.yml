@@ -1,0 +1,40 @@
+name: MCLA iOS 16 - stage pinned codegen configuration
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios16-native-backport]
+    paths:
+      - '.github/workflows/ios16-codegen-configs.yml'
+permissions:
+  contents: read
+jobs:
+  pack-config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+      - name: Checkout original pinned LARecomp source
+        run: |
+          git submodule update --init --depth 1 larecomp
+          git -C larecomp rev-parse HEAD
+      - name: Stage unmodified public configurations only
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          cp larecomp/larecomp_config_xeo3.toml output/
+          cp larecomp/larecomp_xeo3_manifest.toml output/
+          cp larecomp/larecomp_config.toml output/
+          cp larecomp/larecomp_manifest.toml output/
+          cp dependencies.lock.json output/
+          sha256sum output/*.toml > output/config-SHA256SUMS.txt
+          printf '%s\n' 'These are public configuration templates only.' \
+            'Never upload default.xex, game ISOs, archives, or generated title code to the public repository.' > output/README.txt
+      - name: Upload reproducible codegen configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLA-Pinned-Codegen-Configuration
+          path: output/
+          retention-days: 7
+          if-no-files-found: error
