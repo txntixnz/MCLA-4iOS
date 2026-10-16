@@ -1102,15 +1102,8 @@ static void MCLARegisterGraphicsDefaults(void) {
     [panel.logsButton addTarget:self action:@selector(exportLogs:)
         forControlEvents:UIControlEventTouchUpInside];
 #if !MCLA_RUNTIME_ENABLED
-    // The preview build has no game runtime. Give the existing diagnostics
-    // button a discoverable long-press verifier without crowding the layout.
-    UIButtonConfiguration* logsConfig = panel.logsButton.configuration;
-    logsConfig.title = @"Logs / Verify XEX";
-    panel.logsButton.configuration = logsConfig;
-    UILongPressGestureRecognizer* xexHold = [[UILongPressGestureRecognizer alloc]
-        initWithTarget:self action:@selector(verifyXboxExecutableLongPress:)];
-    xexHold.minimumPressDuration = 0.65;
-    [panel.logsButton addGestureRecognizer:xexHold];
+    [panel.verifyButton addTarget:self action:@selector(verifyXboxExecutable:)
+        forControlEvents:UIControlEventTouchUpInside];
 #endif
 
     UILayoutGuide* safe = self.view.safeAreaLayoutGuide;
@@ -2515,9 +2508,10 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self presentViewController:navigation animated:YES completion:nil];
 }
 
-- (void)verifyXboxExecutableLongPress:(UILongPressGestureRecognizer*)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan || self.gameVisible ||
-        self.launchRequested || self.presentedViewController) return;
+- (void)verifyXboxExecutable:(UIButton*)sender {
+    (void)sender;
+    if (self.gameVisible || self.launchRequested ||
+        self.presentedViewController) return;
     self.verifyingExecutable = YES;
     UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
         initForOpeningContentTypes:@[UTTypeData] asCopy:NO];

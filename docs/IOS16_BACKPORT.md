@@ -59,3 +59,7 @@ The iOS 16 preview launcher shows `METAL READY` after the diagnostic shader pipe
 ## Verify a personal Xbox 360 game copy on-device (Stage 3)
 
 In the native iOS 16 diagnostic launcher, **hold Logs / Verify XEX** to open the Files picker, then choose a user-owned **extracted `default.xex`**. This is a read-only, streamed SHA-256 verification against the two executable profiles in the public `GameDataManifest.json`. The game file is never uploaded to GitHub or added to the IPA. An ISO/ZIP must be extracted first. The result confirms which Complete Edition code version is compatible with the recompilation baseline; it does **not** provide missing AOT code, title shaders, or gameplay. Do not put private game files in the repository.
+
+## Stage 4 — separate visible game-verification button
+
+In the iOS16 diagnostic launcher, the bottom full-width **Verify Game** button is a normal tap target (and selectable using the controller). It opens the Files picker for the user's own extracted `default.xex`; **Export Logs** remains separate. No gesture or hidden button is necessary. This preview still has no game runtime or copyrighted game assets.

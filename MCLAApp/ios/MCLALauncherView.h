@@ -8,6 +8,8 @@
 @property(nonatomic, readonly) UIButton* controlsButton;
 @property(nonatomic, readonly) UIButton* savesButton;
 @property(nonatomic, readonly) UIButton* logsButton;
+// Present only in the iOS16 runtime-free verification build.
+@property(nonatomic, readonly) UIButton* verifyButton;
 @property(nonatomic, readonly) UILabel* statusLabel;
 @property(nonatomic, readonly) UILabel* detailLabel;
 @property(nonatomic, assign) BOOL launchReady;
