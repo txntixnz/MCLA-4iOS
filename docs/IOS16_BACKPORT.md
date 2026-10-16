@@ -63,3 +63,7 @@ In the native iOS 16 diagnostic launcher, **hold Logs / Verify XEX** to open the
 ## Stage 4 — separate visible game-verification button
 
 In the iOS16 diagnostic launcher, the bottom full-width **Verify Game** button is a normal tap target (and selectable using the controller). It opens the Files picker for the user's own extracted `default.xex`; **Export Logs** remains separate. No gesture or hidden button is necessary. This preview still has no game runtime or copyrighted game assets.
+
+## Stage 5 — in-place ISO verification
+
+The iOS 16 preview Verify Game picker now accepts file items, including `.iso`. The read-only XDVDFS reader uses the same disc partition candidates and binary-tree layout as the existing Mac game preparer. It checks five required root files and hashes only the embedded `default.xex` against the release manifest. ISO files do not need to be extracted or uploaded. This only verifies the executable; the preview is not a playable recompilation. Raw Xbox 360 ISO required; PS3 disc images and compressed ZIP/RAR archives are unsupported.

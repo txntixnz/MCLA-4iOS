@@ -9,6 +9,8 @@ on:
       - 'MCLAApp/runtime/MCLAGraphicsFoundation.h'
       - 'MCLAApp/runtime/MCLAGraphicsFoundation.mm'
       - 'MCLAApp/ios/MCLAViewController.mm'
+      - 'MCLAApp/ios/MCLAISOReader.h'
+      - 'MCLAApp/ios/MCLAISOReader.cpp'
       - 'MCLAApp/ios/MCLALauncherView.h'
       - 'MCLAApp/ios/MCLALauncherView.mm'
       - 'MCLAApp/Resources/GameDataManifest.json'

@@ -13,6 +13,11 @@
 #import <GameController/GameController.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <CommonCrypto/CommonDigest.h>
+#include "MCLAISOReader.h"
+#include <cstdio>
+#include <cstring>
+#include <algorithm>
+#include <string>
 #include "MCLAMetalPresentation.h"
 #import "MCLAControlArtwork.h"
 #import "MCLASlidingControls.h"
@@ -23,8 +28,15 @@
    Keep the game archives on the user's own device. */
 static NSString* MCLAVerifySelectedExecutable(NSURL* url, BOOL* verified) {
     if (verified) *verified = NO;
-    if (![[url.lastPathComponent lowercaseString] isEqualToString:@"default.xex"])
-        return @"Please select default.xex from an extracted Xbox 360 Complete Edition game folder. An ISO or ZIP is not directly supported by this check.";
+    const BOOL iso = [url.pathExtension.lowercaseString isEqualToString:@"iso"];
+    if (!iso && ![[url.lastPathComponent lowercaseString] isEqualToString:@"default.xex"])
+        return @"Select your Xbox 360 Complete Edition ISO, or extracted default.xex.";
+    MCLAXexExtent extent = {};
+    if (iso) {
+        std::string problem;
+        if (!MCLAFindXbox360Xex(url.fileSystemRepresentation, &extent, &problem))
+            return [NSString stringWithUTF8String:problem.c_str()];
+    }
 
     NSURL* manifestURL = [NSBundle.mainBundle URLForResource:@"GameDataManifest" withExtension:@"json"];
     NSData* data = manifestURL ? [NSData dataWithContentsOfURL:manifestURL] : nil;
@@ -32,29 +44,36 @@ static NSString* MCLAVerifySelectedExecutable(NSURL* url, BOOL* verified) {
     if (![manifest isKindOfClass:NSDictionary.class])
         return @"The bundled game-compatibility manifest is missing or invalid.";
 
-    NSInputStream* stream = [NSInputStream inputStreamWithURL:url];
-    if (!stream) return @"Could not open the selected executable.";
-    [stream open];
-    if (stream.streamStatus == NSStreamStatusError) {
-        NSString* message = stream.streamError.localizedDescription ?: @"Cannot read the file.";
-        [stream close];
-        return message;
+    // For ISO images, hash ONLY default.xex in place; never copy/extract the ISO.
+    FILE* file = fopen(url.fileSystemRepresentation, "rb");
+    if (!file) return @"Unable to open the file. Save the ISO locally in Files first.";
+    if (fseeko(file, 0, SEEK_END) != 0) { fclose(file); return @"Cannot determine file size."; }
+    const off_t end = ftello(file);
+    if (end <= 0) { fclose(file); return @"File is empty or unreadable."; }
+    const uint64_t start = iso ? extent.offset : 0;
+    const uint64_t length = iso ? extent.size : uint64_t(end);
+    if (start > uint64_t(end) || length > uint64_t(end)-start ||
+        fseeko(file, off_t(start), SEEK_SET) != 0) {
+        fclose(file); return @"The executable extent is outside the file.";
     }
-
-    CC_SHA256_CTX context;
-    CC_SHA256_Init(&context);
-    uint8_t block[65536];
-    NSInteger count = 0;
-    uint64_t total = 0;
-    while ((count = [stream read:block maxLength:sizeof(block)]) > 0) {
-        CC_SHA256_Update(&context, block, (CC_LONG)count);
-        total += (uint64_t)count;
+    char signature[4]={};
+    if (length < 4 || fread(signature, 1, 4, file)!=4 ||
+        memcmp(signature, "XEX2", 4) || fseeko(file, off_t(start), SEEK_SET) != 0) {
+        fclose(file); return @"Xbox 360 default.xex has an invalid XEX2 header.";
     }
-    NSError* readError = stream.streamError;
-    [stream close];
-    if (count < 0 || readError || !total)
-        return [NSString stringWithFormat:@"Unable to hash default.xex: %@",
-            readError.localizedDescription ?: @"The file was empty or unreadable."];
+    CC_SHA256_CTX context; CC_SHA256_Init(&context);
+    uint8_t block[65536]; uint64_t remaining = length;
+    while (remaining) {
+        size_t want = size_t(std::min<uint64_t>(remaining,sizeof(block)));
+        size_t got = fread(block,1,want,file);
+        if (got != want) {
+            fclose(file);
+            return @"Unable to read the game ISO completely. Ensure it is downloaded.";
+        }
+        CC_SHA256_Update(&context, block, (CC_LONG)got);
+        remaining -= got;
+    }
+    fclose(file);
     unsigned char hash[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256_Final(hash, &context);
     NSMutableString* digest = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH*2];
@@ -2513,8 +2532,9 @@ static void MCLARegisterGraphicsDefaults(void) {
     if (self.gameVisible || self.launchRequested ||
         self.presentedViewController) return;
     self.verifyingExecutable = YES;
+    // iOS Files often classifies an ISO outside UTTypeData.
     UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
-        initForOpeningContentTypes:@[UTTypeData] asCopy:NO];
+        initForOpeningContentTypes:@[UTTypeItem] asCopy:NO];
     picker.delegate = self;
     picker.modalPresentationStyle = UIModalPresentationFormSheet;
     [self presentViewController:picker animated:YES completion:nil];

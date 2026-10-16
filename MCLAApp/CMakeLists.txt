@@ -188,6 +188,7 @@ set(MCLA_APP_SOURCES
     ios/AppDelegate.mm
     ios/SceneDelegate.mm
     ios/MCLAMetalView.mm
+    ios/MCLAISOReader.cpp
     ios/MCLAViewController.mm
     ios/MCLASaveArchive.mm
     ios/MCLALogArchive.mm
