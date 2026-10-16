@@ -7,6 +7,7 @@ on:
       - '.github/workflows/ios16-codegen-linux.yml'
       - 'MCLAApp/tools/rexglue_host/**'
       - 'tools/apply_dependency_patches.sh'
+      - 'tools/linux_codegen_numeric_shim.py'
 permissions:
   contents: read
 jobs:
