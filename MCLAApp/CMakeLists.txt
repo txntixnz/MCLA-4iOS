@@ -490,6 +490,12 @@ else()
     set(MCLA_APP_BUNDLE_NAME "MCLA")
     set(MCLA_APP_BUNDLE_ID "com.koreanseats.mcla")
 endif()
+# Keep the non-playable diagnostic shell in a separate app container.
+# Do not overwrite an installed playable MCLA build or its save data.
+if(NOT MCLA_RUNTIME_ENABLED AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_EQUAL "16.0")
+    set(MCLA_APP_BUNDLE_ID "com.txntixnz.mcla.ios16.preview")
+    set(MCLA_APP_BUNDLE_NAME "MCLA iOS16 Preview")
+endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${MCLA_APP_INFO_PLIST}")
 set_target_properties(MCLAApp PROPERTIES

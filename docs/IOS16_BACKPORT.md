@@ -47,3 +47,7 @@ Based on upstream [DEVELOPMENT.md](../docs/DEVELOPMENT.md) and [TECHNICAL_NOTES.
 The `ios16-launcher-only` CMake preset sets `MCLA_RUNTIME_ENABLED=OFF`. It deliberately excludes game-derived vertex/shader resources so GitHub-hosted Xcode can compile the **UIKit/Metal shell** without a game dump. This build **cannot launch Midnight Club**. It exists to expose build errors and unsupported iOS APIs before a full port is attempted.
 
 The dedicated Actions workflow `MCLA iOS 16 - launcher compilation` configures Xcode with code signing disabled, attempts the device ARM64 build, and checks the generated app's minimum OS. Any failure is a diagnostic; it is not evidence that the full game is impossible.
+
+## Optional diagnostic IPA
+
+A successful launcher-only workflow uploads `MCLA-iOS16-LAUNCHER-ONLY-NO-GAME.ipa` as an Actions artifact. It is ad-hoc signed for testing on a compatible sideload/TrollStore setup. It has a distinct bundle identifier `com.txntixnz.mcla.ios16.preview`, so it does not overwrite a full-game MCLA installation. The UI may still display the default name MCLA. This is strictly a **non-playable native iOS 16 shell**; do not copy game files into it expecting races to work. The value of a device test is checking whether the launcher and basic Metal presenter start on an A15 phone.

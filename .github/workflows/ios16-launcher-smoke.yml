@@ -31,3 +31,27 @@ jobs:
           test -f "$APP/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '16.0'
+      - name: Package isolated launcher-only IPA (no game code)
+        run: |
+          set -euo pipefail
+          APP=out/build/ios16-launcher-only/Release-iphoneos/MCLAApp.app
+          if find "$APP" -type f \( -iname '*.xex' -o -iname '*.rpf' -o -iname '*.iso' \) | grep -q .; then
+            echo "Game-derived data found in launcher-only artifact" >&2
+            exit 1
+          fi
+          codesign --force --sign - --timestamp=none "$APP"
+          codesign --verify --strict "$APP"
+          mkdir -p output/Payload
+          ditto "$APP" output/Payload/MCLAApp.app
+          (
+            cd output
+            zip -qry MCLA-iOS16-LAUNCHER-ONLY-NO-GAME.ipa Payload
+          )
+          unzip -t output/MCLA-iOS16-LAUNCHER-ONLY-NO-GAME.ipa | tail -1
+      - name: Upload iOS16 diagnostic launcher artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLA-iOS16-LAUNCHER-ONLY-NO-GAME
+          path: output/MCLA-iOS16-LAUNCHER-ONLY-NO-GAME.ipa
+          if-no-files-found: error
+          retention-days: 7
