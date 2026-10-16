@@ -55,3 +55,7 @@ A successful launcher-only workflow uploads `MCLA-iOS16-LAUNCHER-ONLY-NO-GAME.ip
 ## On-device Metal test report
 
 The iOS 16 preview launcher shows `METAL READY` after the diagnostic shader pipelines compile and depth state initializes, otherwise `METAL CHECK`. A successful report confirms native test-pipeline setup, not the game’s title renderer. Export Logs now includes pipeline readiness, drawable dimensions, submitted/completed frames, and setup errors. Keep exported logs and game files out of the public repository.
+
+## Verify a personal Xbox 360 game copy on-device (Stage 3)
+
+In the native iOS 16 diagnostic launcher, **hold Logs / Verify XEX** to open the Files picker, then choose a user-owned **extracted `default.xex`**. This is a read-only, streamed SHA-256 verification against the two executable profiles in the public `GameDataManifest.json`. The game file is never uploaded to GitHub or added to the IPA. An ISO/ZIP must be extracted first. The result confirms which Complete Edition code version is compatible with the recompilation baseline; it does **not** provide missing AOT code, title shaders, or gameplay. Do not put private game files in the repository.

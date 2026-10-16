@@ -12,10 +12,77 @@
 #import <CoreMotion/CoreMotion.h>
 #import <GameController/GameController.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <CommonCrypto/CommonDigest.h>
 #include "MCLAMetalPresentation.h"
 #import "MCLAControlArtwork.h"
 #import "MCLASlidingControls.h"
 #import "MCLAControlResizeGesture.h"
+
+
+/* Diagnostic only: fingerprint a user-selected executable without uploading it.
+   Keep the game archives on the user's own device. */
+static NSString* MCLAVerifySelectedExecutable(NSURL* url, BOOL* verified) {
+    if (verified) *verified = NO;
+    if (![[url.lastPathComponent lowercaseString] isEqualToString:@"default.xex"])
+        return @"Please select default.xex from an extracted Xbox 360 Complete Edition game folder. An ISO or ZIP is not directly supported by this check.";
+
+    NSURL* manifestURL = [NSBundle.mainBundle URLForResource:@"GameDataManifest" withExtension:@"json"];
+    NSData* data = manifestURL ? [NSData dataWithContentsOfURL:manifestURL] : nil;
+    NSDictionary* manifest = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+    if (![manifest isKindOfClass:NSDictionary.class])
+        return @"The bundled game-compatibility manifest is missing or invalid.";
+
+    NSInputStream* stream = [NSInputStream inputStreamWithURL:url];
+    if (!stream) return @"Could not open the selected executable.";
+    [stream open];
+    if (stream.streamStatus == NSStreamStatusError) {
+        NSString* message = stream.streamError.localizedDescription ?: @"Cannot read the file.";
+        [stream close];
+        return message;
+    }
+
+    CC_SHA256_CTX context;
+    CC_SHA256_Init(&context);
+    uint8_t block[65536];
+    NSInteger count = 0;
+    uint64_t total = 0;
+    while ((count = [stream read:block maxLength:sizeof(block)]) > 0) {
+        CC_SHA256_Update(&context, block, (CC_LONG)count);
+        total += (uint64_t)count;
+    }
+    NSError* readError = stream.streamError;
+    [stream close];
+    if (count < 0 || readError || !total)
+        return [NSString stringWithFormat:@"Unable to hash default.xex: %@",
+            readError.localizedDescription ?: @"The file was empty or unreadable."];
+    unsigned char hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(hash, &context);
+    NSMutableString* digest = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH*2];
+    for (uint8_t byte : hash) [digest appendFormat:@"%02x", byte];
+
+    NSString* baseline = manifest[@"baselineDefaultXexSha256"];
+    if ([baseline isKindOfClass:NSString.class] &&
+        [digest caseInsensitiveCompare:baseline] == NSOrderedSame) {
+        if (verified) *verified = YES;
+        return [NSString stringWithFormat:
+            @"Verified Xbox 360 Complete Edition: baseline game executable (media 5940C9DB).\\nSHA-256: %@\\n\\nThis confirms executable identity only, not a playable iOS runtime.",
+            digest];
+    }
+    NSArray* alternatives = manifest[@"compatibleExecutables"];
+    for (NSDictionary* candidate in alternatives) {
+        if (![candidate isKindOfClass:NSDictionary.class]) continue;
+        NSString* candidateHash = candidate[@"defaultXexSha256"];
+        if ([candidateHash isKindOfClass:NSString.class] &&
+            [digest caseInsensitiveCompare:candidateHash] == NSOrderedSame) {
+            if (verified) *verified = YES;
+            return [NSString stringWithFormat:
+                @"Verified Xbox 360 Complete Edition executable. Alternate media ID: %@, version %@.\\nSHA-256: %@\\n\\nThis confirms executable identity only, not a playable iOS runtime.",
+                candidate[@"mediaId"] ?: @"unknown", candidate[@"version"] ?: @"unknown", digest];
+        }
+    }
+    return [NSString stringWithFormat:
+        @"This default.xex does not match either executable supported by the existing recompilation. It could be another version or an updated executable.\\nSHA-256: %@\\n\\nDo not rename or patch it to bypass this check.", digest];
+}
 
 // Version 1.0 enables the redesigned controls and HUD by default. Retain the
 // dedicated preference keys so existing layouts survive the release update.
@@ -862,6 +929,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 @property(nonatomic, weak) MCLASavesOptionsController* savesOptionsPage;
 @property(nonatomic, strong) NSURL* saveExportURL;
 @property(nonatomic, assign) BOOL importingSaveArchive;
+@property(nonatomic, assign) BOOL verifyingExecutable;
 @property(nonatomic, strong) UIAlertController* pendingSaveAlert;
 @property(nonatomic, copy) void (^pendingSaveConfirm)(void);
 @property(nonatomic, copy) void (^pendingSaveCancel)(void);
@@ -1033,6 +1101,17 @@ static void MCLARegisterGraphicsDefaults(void) {
 
     [panel.logsButton addTarget:self action:@selector(exportLogs:)
         forControlEvents:UIControlEventTouchUpInside];
+#if !MCLA_RUNTIME_ENABLED
+    // The preview build has no game runtime. Give the existing diagnostics
+    // button a discoverable long-press verifier without crowding the layout.
+    UIButtonConfiguration* logsConfig = panel.logsButton.configuration;
+    logsConfig.title = @"Logs / Verify XEX";
+    panel.logsButton.configuration = logsConfig;
+    UILongPressGestureRecognizer* xexHold = [[UILongPressGestureRecognizer alloc]
+        initWithTarget:self action:@selector(verifyXboxExecutableLongPress:)];
+    xexHold.minimumPressDuration = 0.65;
+    [panel.logsButton addGestureRecognizer:xexHold];
+#endif
 
     UILayoutGuide* safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
@@ -2436,6 +2515,17 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self presentViewController:navigation animated:YES completion:nil];
 }
 
+- (void)verifyXboxExecutableLongPress:(UILongPressGestureRecognizer*)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan || self.gameVisible ||
+        self.launchRequested || self.presentedViewController) return;
+    self.verifyingExecutable = YES;
+    UIDocumentPickerViewController* picker = [[UIDocumentPickerViewController alloc]
+        initForOpeningContentTypes:@[UTTypeData] asCopy:NO];
+    picker.delegate = self;
+    picker.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
 - (void)exportLogs:(UIButton*)sender {
     MCLARuntimeReport runtime = {}; MCLAHostGetRuntimeReport(&runtime);
     MCLAGraphicsReport graphics = {}; MCLAGraphicsGetReport(&graphics);
@@ -2559,11 +2649,32 @@ static void MCLARegisterGraphicsDefaults(void) {
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController*)controller {
     (void)controller;
     self.importingSaveArchive = NO;
+    self.verifyingExecutable = NO;
     [self cleanupSaveExport];
 }
 
 - (void)documentPicker:(UIDocumentPickerViewController*)controller
     didPickDocumentsAtURLs:(NSArray<NSURL*>*)urls {
+    if (self.verifyingExecutable) {
+        self.verifyingExecutable = NO;
+        NSURL* picked = urls.firstObject;
+        if (!picked) return;
+        __weak MCLAViewController* weakSelf = self;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            BOOL scoped = [picked startAccessingSecurityScopedResource];
+            BOOL supported = NO;
+            NSString* message = MCLAVerifySelectedExecutable(picked, &supported);
+            if (scoped) [picked stopAccessingSecurityScopedResource];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                MCLAViewController* owner = weakSelf;
+                if (owner && !owner.presentedViewController) {
+                    [owner showSaveMessage:supported ? @"Game executable verified" : @"Executable check"
+                                   detail:message];
+                }
+            });
+        });
+        return;
+    }
     if (!self.importingSaveArchive) {
         [self cleanupSaveExport];
         return;

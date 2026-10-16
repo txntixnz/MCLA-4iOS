@@ -9,6 +9,7 @@ on:
       - 'MCLAApp/runtime/MCLAGraphicsFoundation.h'
       - 'MCLAApp/runtime/MCLAGraphicsFoundation.mm'
       - 'MCLAApp/ios/MCLAViewController.mm'
+      - 'MCLAApp/Resources/GameDataManifest.json'
       - '.github/workflows/ios16-launcher-smoke.yml'
 jobs:
   build-launcher:
