@@ -1,11 +1,11 @@
 # Install this as .github/workflows/ios16-private-aot.yml in a PRIVATE repository.
-# Add the existing Stage 9 ZIP at inputs/MCLA_iOS16_Stage9_PRIVATE_AOT.zip.
+# Add the existing Stage 9 ZIP at the repository root.
 name: MCLA private game AOT - iOS 16 arm64
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['inputs/**', '.github/workflows/ios16-private-aot.yml']
+    paths: ['MCLA_iOS16_Stage9_PRIVATE_AOT.zip', '.github/workflows/ios16-private-aot.yml']
 permissions:
   contents: read
 jobs:
@@ -44,7 +44,7 @@ jobs:
           python3 - <<'PY'
           import zipfile
           from pathlib import Path
-          package=Path('private-inputs/inputs/MCLA_iOS16_Stage9_PRIVATE_AOT.zip')
+          package=Path('private-inputs/MCLA_iOS16_Stage9_PRIVATE_AOT.zip')
           target=Path('private-aot').resolve()
           with zipfile.ZipFile(package) as archive:
               for item in archive.infolist():
