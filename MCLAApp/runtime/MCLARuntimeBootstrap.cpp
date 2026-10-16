@@ -520,8 +520,10 @@ void RunRuntime(std::filesystem::path gameRoot,
         ConfigureMCLACompatibilityFlags();
 
         SetStatus("Initializing the Xbox runtime and MCLA AOT table…");
+        const auto gameDirectory = std::filesystem::is_regular_file(gameRoot)
+            ? gameRoot.parent_path() : gameRoot;
         rex::Runtime runtime(gameRoot, supportRoot / "user",
-                             gameRoot / "update", supportRoot / "cache", {},
+                             gameDirectory / "update", supportRoot / "cache", {},
                              supportRoot / "marketplace", supportRoot / "saves");
         rex::RuntimeConfig config;
         config.tool_mode = false;

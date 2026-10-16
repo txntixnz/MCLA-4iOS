@@ -1,9 +1,11 @@
 #include "MCLAHostBridge.h"
+#import "MCLAGameInput.h"
 
 #import <Foundation/Foundation.h>
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 #if MCLA_RUNTIME_ENABLED
 #include "MCLANativeTitleBridge.h"
@@ -25,6 +27,58 @@ void CopyMessage(char* destination, size_t destinationSize, const char* message)
         return;
     }
     std::snprintf(destination, destinationSize, "%s", message ? message : "");
+}
+
+bool VerifyGameSource(NSString* path, NSString** detail, bool refresh = false) {
+    // Refreshing the UI must not hash the executable on every timer tick.
+    // The launch action requests a fresh check before the runtime opens it.
+    static std::mutex mutex;
+    static NSArray* cachedKey = nil;
+    static NSString* cachedDetail = nil;
+    static BOOL cachedVerified = NO;
+    std::lock_guard lock(mutex);
+    NSDictionary* attributes = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
+    if (!attributes) {
+        if (detail) *detail = @"Game file is not available locally.";
+        return false;
+    }
+    NSArray* key = @[path, attributes[NSFileSize] ?: @0,
+                    attributes[NSFileModificationDate] ?: NSDate.distantPast];
+    if (refresh || ![cachedKey isEqualToArray:key]) {
+        cachedKey = key;
+        cachedDetail = MCLAVerifySelectedExecutable([NSURL fileURLWithPath:path], &cachedVerified);
+    }
+    if (detail) *detail = cachedDetail;
+    return cachedVerified;
+}
+
+NSString* ResolveGameSource(NSString* root, NSString** detail, bool refresh = false) {
+    NSFileManager* files = NSFileManager.defaultManager;
+    bool extracted = true;
+    for (const char* required : kRequiredFiles) {
+        BOOL directory = NO;
+        NSString* path = [root stringByAppendingPathComponent:[NSString stringWithUTF8String:required]];
+        if (![files fileExistsAtPath:path isDirectory:&directory] || directory) extracted = false;
+    }
+    if (extracted) {
+        if (VerifyGameSource([root stringByAppendingPathComponent:@"default.xex"], detail, refresh)) return root;
+        return nil;
+    }
+    NSMutableArray<NSString*>* images = [NSMutableArray array];
+    NSString* input = [[root stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"MCLA_ISO_Input"];
+    for (NSString* directory in @[root, input]) {
+        for (NSString* name in [files contentsOfDirectoryAtPath:directory error:nil]) {
+            if (![name.pathExtension.lowercaseString isEqualToString:@"iso"]) continue;
+            NSString* path = [directory stringByAppendingPathComponent:name];
+            BOOL isDirectory = NO;
+            if ([files fileExistsAtPath:path isDirectory:&isDirectory] && !isDirectory) [images addObject:path];
+        }
+    }
+    if (images.count != 1) {
+        if (images.count > 1 && detail) *detail = @"Keep one game ISO in MCLA_Game_Files or MCLA_ISO_Input.";
+        return nil;
+    }
+    return VerifyGameSource(images.firstObject, detail, refresh) ? images.firstObject : nil;
 }
 
 }  // namespace
@@ -62,11 +116,17 @@ bool MCLAHostInspectGameData(const char* rootPath, MCLADataReport* report) {
         }
     }
 
-    report->ready = missing.count == 0;
+    NSString* validationDetail = nil;
+    NSString* source = ResolveGameSource(root, &validationDetail);
+    report->ready = source != nil;
     if (report->ready) {
-        CopyMessage(report->detail, sizeof(report->detail), "Complete Edition data set detected.");
+        report->presentFiles = report->requiredFiles;
+        CopyMessage(report->detail, sizeof(report->detail),
+            [source.pathExtension.lowercaseString isEqualToString:@"iso"]
+                ? "Verified Complete Edition ISO; direct read-only disc access ready."
+                : "Verified Complete Edition data set detected.");
     } else {
-        NSString* message = [NSString stringWithFormat:@"Missing: %@",
+        NSString* message = validationDetail ?: [NSString stringWithFormat:@"Missing: %@",
             [missing componentsJoinedByString:@", "]];
         CopyMessage(report->detail, sizeof(report->detail), message.UTF8String);
     }
@@ -75,6 +135,17 @@ bool MCLAHostInspectGameData(const char* rootPath, MCLADataReport* report) {
 
 bool MCLAHostStartRuntime(const char* rootPath, char* errorMessage, uint32_t errorMessageSize) {
 #if MCLA_RUNTIME_ENABLED
+    if (!rootPath || !rootPath[0]) {
+        CopyMessage(errorMessage, errorMessageSize, "No game-data path was supplied.");
+        return false;
+    }
+    NSString* validationDetail = nil;
+    NSString* source = ResolveGameSource([NSString stringWithUTF8String:rootPath], &validationDetail, true);
+    if (!source) {
+        CopyMessage(errorMessage, errorMessageSize,
+            (validationDetail ?: @"Add the Complete Edition ISO or extracted files to MCLA_Game_Files.").UTF8String);
+        return false;
+    }
     NSString* metadataPath = [NSBundle.mainBundle
         pathForResource:@"mcla_vertex_elements" ofType:@"map"];
     if (!metadataPath || !MCLANativeTitleBridgeSetMetadataPath(
@@ -95,7 +166,7 @@ bool MCLAHostStartRuntime(const char* rootPath, char* errorMessage, uint32_t err
         NSApplicationSupportDirectory, NSUserDomainMask, YES);
     NSString* support = [supportDirectories.firstObject
         stringByAppendingPathComponent:@"MCLA"];
-    return MCLAStartRuntimeBackend(rootPath, support.fileSystemRepresentation,
+    return MCLAStartRuntimeBackend(source.fileSystemRepresentation, support.fileSystemRepresentation,
                                    errorMessage, errorMessageSize);
 #else
     (void)rootPath;

@@ -1,0 +1,79 @@
+# Install only in the user's PRIVATE build repository.
+name: MCLA private iOS 16 experimental shader rebuild
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ios16-private-shaders.yml']
+permissions:
+  contents: read
+jobs:
+  compile-private-shaders:
+    if: ${{ github.event.repository.private == true }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout pinned generic source tools
+        uses: actions/checkout@v4
+        with:
+          repository: txntixnz/MCLA-4iOS
+          ref: 1e4d24adc57e267a99c619a9b34dcec5b54e6ad2
+          path: source
+          submodules: false
+      - name: Require exact direct iOS 16 synthetic baseline comparison
+        run: bash source/tools/probe_ios16_air.sh out/synthetic-baseline
+      - name: Obtain the existing release privately and verify its identity
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 \
+            https://github.com/KoreanSeats1/MCLA-4iOS/releases/download/v1.0.4/MCLA-4iOS-1.0.4.ipa \
+            -o release.ipa
+          python3 - <<'PYTHON'
+          import hashlib, pathlib, zipfile
+          p = pathlib.Path('release.ipa')
+          expected = 'bde01b3125860f10d484aa788757a7a5b3b2cfb70b2e0206f989ac95e6fda041'
+          if hashlib.sha256(p.read_bytes()).hexdigest() != expected:
+              raise ValueError('Upstream release bytes changed; refusing unreviewed inputs')
+          target = pathlib.Path('private-release')
+          with zipfile.ZipFile(p) as archive:
+              for entry in archive.infolist():
+                  name = entry.filename
+                  permitted = name.startswith('Payload/MCLAApp.app/MCLAMetalShaders/') and name.endswith('.metallib')
+                  permitted |= name in ('Payload/MCLAApp.app/MCLAFsr.metallib',
+                      'Payload/MCLAApp.app/mcla_vertex_elements.map',
+                      'Payload/MCLAApp.app/mcla_native_shaders.mspv')
+                  if permitted:
+                      destination = (target / name).resolve()
+                      if not destination.is_relative_to(target.resolve()):
+                          raise ValueError('Archive entry escapes staging')
+                      destination.parent.mkdir(parents=True, exist_ok=True)
+                      destination.write_bytes(archive.read(entry))
+          libraries = list(target.rglob('*.metallib'))
+          if len(libraries) != 604: raise ValueError(f'Expected 604 libraries, got {len(libraries)}')
+          print('Verified release; staged 603 title libraries and the FSR library privately.')
+          PYTHON
+      - name: Recompile the restricted AIR subset and verify shader reflection
+        run: |
+          python3 source/tools/ios16_air_compat.py compile \
+            private-release/Payload/MCLAApp.app out/private-shader-rebuild \
+            --baseline-proof out/synthetic-baseline/baseline-proof.json \
+            --allow-experimental-air-compat --workers 4
+      - name: Preserve supporting metadata and source identity
+        if: always()
+        run: |
+          mkdir -p out/private-shader-rebuild/reference-metadata
+          for name in mcla_vertex_elements.map mcla_native_shaders.mspv; do
+            if [[ -f "private-release/Payload/MCLAApp.app/$name" ]]; then
+              cp "private-release/Payload/MCLAApp.app/$name" out/private-shader-rebuild/reference-metadata/
+            fi
+          done
+          printf '%s\n' '1e4d24adc57e267a99c619a9b34dcec5b54e6ad2' > out/private-shader-rebuild/tool-source-commit.txt
+          printf '%s\n' 'EXPERIMENTAL: compiler checks only; iOS 16 device pipelines and rendering untested.' > out/private-shader-rebuild/STATUS.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MCLA-Private-iOS16-EXPERIMENTAL-Shaders
+          path: out
+          compression-level: 9
+          retention-days: 7
+          if-no-files-found: error

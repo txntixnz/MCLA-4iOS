@@ -48,6 +48,8 @@ set(MCLA_XENIOS_IOS_LIB_DIR
 set(MCLA_TITLE_AOT_LINKED OFF)
 set(MCLA_RUNTIME_CORE_LINKED OFF)
 set(MCLA_XENOS_BACKEND_LINKED OFF)
+set(MCLA_PREBUILT_AOT_ARCHIVE "" CACHE FILEPATH
+    "Optional previously verified private title AOT archive; generated headers remain required")
 
 if(MCLA_RUNTIME_ENABLED)
     if(NOT EXISTS "${MCLA_GENERATED_DIR}/sources.cmake")
@@ -81,6 +83,31 @@ if(MCLA_RUNTIME_ENABLED)
     add_subdirectory("${MCLA_REXGLUE_SDK_DIR}"
                      "${CMAKE_CURRENT_BINARY_DIR}/rexglue")
 
+    if(MCLA_PREBUILT_AOT_ARCHIVE)
+        if(MCLA_SINGLE_TILE_LAB)
+            message(FATAL_ERROR "Single-tile Lab needs its own patched AOT source compilation")
+        endif()
+        if(NOT EXISTS "${MCLA_PREBUILT_AOT_ARCHIVE}")
+            message(FATAL_ERROR "The supplied private AOT archive does not exist")
+        endif()
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        execute_process(
+            COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/../tools/ios16_verify_aot_archive.py"
+                    "${MCLA_PREBUILT_AOT_ARCHIVE}"
+            RESULT_VARIABLE MCLA_AOT_ARCHIVE_RESULT
+            OUTPUT_VARIABLE MCLA_AOT_ARCHIVE_OUTPUT
+            ERROR_VARIABLE MCLA_AOT_ARCHIVE_ERROR)
+        if(NOT MCLA_AOT_ARCHIVE_RESULT EQUAL 0)
+            message(FATAL_ERROR "Private AOT verification failed: ${MCLA_AOT_ARCHIVE_ERROR}")
+        endif()
+        add_library(MCLATitleAOT STATIC IMPORTED)
+        set_target_properties(MCLATitleAOT PROPERTIES
+            IMPORTED_LOCATION "${MCLA_PREBUILT_AOT_ARCHIVE}")
+        target_include_directories(MCLATitleAOT INTERFACE "${MCLA_GENERATED_DIR}")
+        target_link_libraries(MCLATitleAOT INTERFACE rex::runtime)
+        message(STATUS "MCLA: reusing verified private ARM64/iOS 16 title archive")
+    else()
     include("${MCLA_GENERATED_DIR}/sources.cmake")
     if(MCLA_SINGLE_TILE_LAB)
         # Keep the working app's generated AOT source untouched. The Lab-only
@@ -114,6 +141,7 @@ if(MCLA_RUNTIME_ENABLED)
     target_compile_features(MCLATitleAOT PUBLIC cxx_std_23)
     set_source_files_properties("${MCLA_GENERATED_DIR}/larecomp_register.cpp"
         PROPERTIES COMPILE_OPTIONS "-O0;-fno-global-isel")
+    endif() # optional verified private archive
 
     # LARecomp's shipping manifest contains optional diagnostics, desktop UI,
     # multiplayer probes, and mod hooks. Its XEO3 build already supplies a
@@ -189,6 +217,7 @@ set(MCLA_APP_SOURCES
     ios/SceneDelegate.mm
     ios/MCLAMetalView.mm
     ios/MCLAISOReader.cpp
+    ios/MCLAGameInput.mm
     ios/MCLAViewController.mm
     ios/MCLASaveArchive.mm
     ios/MCLALogArchive.mm
@@ -496,6 +525,11 @@ endif()
 if(NOT MCLA_RUNTIME_ENABLED AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_EQUAL "16.0")
     set(MCLA_APP_BUNDLE_ID "com.txntixnz.mcla.ios16.preview")
     set(MCLA_APP_BUNDLE_NAME "MCLA iOS16 Preview")
+endif()
+set(MCLA_BUNDLE_IDENTIFIER_OVERRIDE "" CACHE STRING
+    "Optional isolated bundle identifier for a private experimental build")
+if(MCLA_BUNDLE_IDENTIFIER_OVERRIDE)
+    set(MCLA_APP_BUNDLE_ID "${MCLA_BUNDLE_IDENTIFIER_OVERRIDE}")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${MCLA_APP_INFO_PLIST}")
