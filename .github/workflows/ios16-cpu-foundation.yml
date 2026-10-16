@@ -50,5 +50,16 @@ jobs:
           LIB=out/ios16-cpu-probe/libMCLACPUCompilation.a
           test -f "$LIB"
           lipo -info "$LIB"
-          lipo -verify_arch arm64 "$LIB"
+          lipo "$LIB" -verify_arch arm64
+          OBJ=$(find out/ios16-cpu-probe -name ios16_aot_toolchain_probe.cpp.o -type f | head -1)
+          test -n "$OBJ"
+          xcrun vtool -show-build "$OBJ" > out/ios16-cpu-probe/cpu-build-target.txt
+          cat out/ios16-cpu-probe/cpu-build-target.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text=Path('out/ios16-cpu-probe/cpu-build-target.txt').read_text()
+          assert re.search(r'platform\s+IOS\b',text), text
+          assert re.search(r'minos\s+16\.0(?:\.0)?\b',text), text
+          PY
           echo 'CPU foundation compiled. The private game AOT was not supplied or tested.'

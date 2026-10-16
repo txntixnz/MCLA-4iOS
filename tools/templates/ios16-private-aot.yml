@@ -1,0 +1,72 @@
+# Install this as .github/workflows/ios16-private-aot.yml in a PRIVATE repository.
+# Add the existing Stage 9 ZIP at inputs/MCLA_iOS16_Stage9_PRIVATE_AOT.zip.
+name: MCLA private game AOT - iOS 16 arm64
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['inputs/**', '.github/workflows/ios16-private-aot.yml']
+permissions:
+  contents: read
+jobs:
+  compile-private-game:
+    # A job-level guard prevents checkout, extraction and logging on public repos.
+    if: ${{ github.event.repository.private == true }}
+    runs-on: macos-26
+    timeout-minutes: 50
+    steps:
+      - name: Checkout private build inputs
+        uses: actions/checkout@v4
+        with:
+          path: private-inputs
+      - name: Checkout pinned public backport source
+        uses: actions/checkout@v4
+        with:
+          repository: txntixnz/MCLA-4iOS
+          ref: e86d7d552f0a1504e659f14cc75802005b5d19ca
+          path: source
+          submodules: false
+      - name: Initialize pinned dependencies
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git submodule update --init --depth 1 larecomp theft4-foundation
+          sdk=glue/rexglue-sdk-main/thirdparty
+          git -C theft4-foundation submodule update --init --depth 1 -- \
+            "$sdk/cli11" "$sdk/libmspack" "$sdk/FFmpeg" \
+            "$sdk/tomlplusplus" "$sdk/simde" "$sdk/xxHash" \
+            "$sdk/spdlog" "$sdk/fmt" "$sdk/snappy" "$sdk/utfcpp" \
+            "$sdk/imgui" "$sdk/sdl3" "$sdk/inja" "$sdk/o1heap"
+          sh tools/apply_dependency_patches.sh
+      - name: Validate and stage the private AOT package
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          package=Path('private-inputs/inputs/MCLA_iOS16_Stage9_PRIVATE_AOT.zip')
+          target=Path('private-aot').resolve()
+          with zipfile.ZipFile(package) as archive:
+              for item in archive.infolist():
+                  if not (target/item.filename).resolve().is_relative_to(target):
+                      raise ValueError('Archive path escapes private staging')
+              archive.extractall(target)
+          PY
+          python3 private-aot/verify_private_aot.py private-aot
+      - name: Compile the actual generated game sources for iOS 16 arm64
+        run: |
+          set -euo pipefail
+          cmake -S source/MCLAApp/tools/aot_compile -B private-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 -DMCLA_AOT_PROBE_ONLY=OFF \
+            -DMCLA_PRIVATE_GENERATED_DIR="$GITHUB_WORKSPACE/private-aot/generated"
+          cmake --build private-build --target MCLACPUCompilation --parallel 4
+          lipo private-build/libMCLACPUCompilation.a -verify_arch arm64
+      - name: Preserve private compiled CPU archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLA-Private-iOS16-ARM64-CPU-ONLY
+          path: private-build/libMCLACPUCompilation.a
+          retention-days: 7
+          if-no-files-found: error
