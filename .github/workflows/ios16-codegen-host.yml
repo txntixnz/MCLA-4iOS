@@ -1,0 +1,76 @@
+name: MCLA iOS 16 - build native code generator
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios16-native-backport]
+    paths:
+      - '.github/workflows/ios16-codegen-host.yml'
+      - 'MCLAApp/tools/rexglue_host/**'
+      - 'patches/larecomp-ios.patch'
+      - 'patches/theft4-foundation-ios.patch'
+      - 'tools/ios16_stage_codegen_manifest.py'
+      - 'tools/apply_dependency_patches.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  rexglue-host-tools:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - name: Checkout app source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+      - name: Fetch only two pinned code generation dependencies
+        run: |
+          set -euo pipefail
+          git submodule sync
+          git submodule update --init --depth 1 larecomp theft4-foundation
+          git -C larecomp rev-parse HEAD
+          git -C theft4-foundation rev-parse HEAD
+          python3 - <<'PY'
+          import json,subprocess
+          lock=json.load(open('dependencies.lock.json'))
+          for key,path in [('larecomp','larecomp'),('theft4-foundation','theft4-foundation')]:
+              actual=subprocess.check_output(['git','-C',path,'rev-parse','HEAD'],text=True).strip()
+              assert actual==lock[key]['commit'],(key,actual,lock[key]['commit'])
+              print(f'{key}: verified pinned commit {actual}')
+          PY
+      - name: Apply pinned Apple compatibility patches
+        run: sh tools/apply_dependency_patches.sh
+      - name: Inspect Apple host toolchain
+        run: |
+          xcodebuild -version
+          cmake --version
+          clang++ --version
+          ninja --version
+      - name: Configure headless ReXGlue native code generator
+        run: |
+          cmake -S MCLAApp/tools/rexglue_host -B MCLAApp/out/host-tools -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+      - name: Build actual ReXGlue codegen executable
+        run: |
+          cmake --build MCLAApp/out/host-tools --target rexglue --parallel 4
+      - name: Locate and run host CLI help
+        run: |
+          set -euo pipefail
+          find MCLAApp/out/host-tools -type f -name rexglue -perm -111 -print
+          EXE=$(find MCLAApp/out/host-tools -type f -name rexglue -perm -111 | head -1)
+          test -n "$EXE"
+          "$EXE" --help > "$RUNNER_TEMP/rexglue-help.txt" 2>&1 || true
+          "$EXE" codegen --help > "$RUNNER_TEMP/rexglue-codegen-help.txt" 2>&1 || true
+          sed -n '1,100p' "$RUNNER_TEMP/rexglue-codegen-help.txt"
+      - name: Upload codegen logs and standalone native host executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLA-ReXGlue-Host-Tools-macOS
+          path: |
+            MCLAApp/out/host-tools/**/rexglue
+            ${{ runner.temp }}/rexglue-help.txt
+            ${{ runner.temp }}/rexglue-codegen-help.txt
+          if-no-files-found: error
+          retention-days: 7
