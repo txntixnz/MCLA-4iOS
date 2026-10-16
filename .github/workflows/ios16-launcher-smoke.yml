@@ -1,0 +1,33 @@
+name: MCLA iOS 16 - launcher compilation
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios16-native-backport]
+    paths:
+      - 'MCLAApp/CMakeLists.txt'
+      - 'MCLAApp/CMakePresets.json'
+      - '.github/workflows/ios16-launcher-smoke.yml'
+jobs:
+  build-launcher:
+    runs-on: macos-15
+    steps:
+      - name: Checkout launcher source
+        uses: actions/checkout@v4
+      - name: Show tool versions
+        run: |
+          xcodebuild -version
+          cmake --version
+      - name: Configure native iOS 16 ARM64 launcher
+        run: |
+          cmake --preset ios16-launcher-only -S MCLAApp \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DMCLA_DEVELOPMENT_TEAM=
+      - name: Compile without private game code or signing
+        run: |
+          cmake --build out/build/ios16-launcher-only --config Release --target MCLAApp
+      - name: Inspect produced app deployment target
+        run: |
+          APP=out/build/ios16-launcher-only/Release-iphoneos/MCLAApp.app
+          test -f "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '16.0'

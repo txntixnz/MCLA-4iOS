@@ -444,6 +444,9 @@ set_source_files_properties(Resources/Assets.xcassets PROPERTIES
     MACOSX_PACKAGE_LOCATION Resources)
 target_sources(MCLAApp PRIVATE Resources/Assets.xcassets)
 
+# The launcher-only profile deliberately has no game-derived metadata.
+# The full recompilation runtime still requires the original vertex and shader inputs.
+if(MCLA_RUNTIME_ENABLED)
 # Generated exclusively from the user's live MCLA shader descriptors. This is
 # the first title-specific input to the MCLA native renderer and intentionally
 # remains separate from Theft4's GTA IV shader cache.
@@ -473,6 +476,8 @@ set_source_files_properties("${MCLA_NATIVE_SHADER_PACK}" PROPERTIES
     MACOSX_PACKAGE_LOCATION Resources
 )
 target_sources(MCLAApp PRIVATE "${MCLA_NATIVE_SHADER_PACK}")
+
+endif() # MCLA_RUNTIME_ENABLED: game-derived metadata resources
 
 if(MCLA_SINGLE_TILE_LAB OR MCLA_SMAA_LAB)
     set(MCLA_APP_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/Info-Lab.plist")

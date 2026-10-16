@@ -41,3 +41,9 @@ python3 tools/ios16_preflight.py --app out/build/ios16-device-release/Release-ip
 Some MSL3.1-only shader constructs, runtime API availability checks or graphics features may require more work. Existing iOS 18 `.metallib` assets cannot be reused unchanged. The pinned tools may also rely on private locally-generated intermediate shader data. Do not simply change Info.plist or re-sign the iOS 18 IPA. No performance claims are made for A15.
 
 Based on upstream [DEVELOPMENT.md](../docs/DEVELOPMENT.md) and [TECHNICAL_NOTES.md](../docs/TECHNICAL_NOTES.md). Preserve GPL-3.0 licensing and credits. Game data remains private.
+
+## Second-stage launcher-only compilation probe
+
+The `ios16-launcher-only` CMake preset sets `MCLA_RUNTIME_ENABLED=OFF`. It deliberately excludes game-derived vertex/shader resources so GitHub-hosted Xcode can compile the **UIKit/Metal shell** without a game dump. This build **cannot launch Midnight Club**. It exists to expose build errors and unsupported iOS APIs before a full port is attempted.
+
+The dedicated Actions workflow `MCLA iOS 16 - launcher compilation` configures Xcode with code signing disabled, attempts the device ARM64 build, and checks the generated app's minimum OS. Any failure is a diagnostic; it is not evidence that the full game is impossible.

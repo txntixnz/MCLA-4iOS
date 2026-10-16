@@ -80,6 +80,20 @@
         "CMAKE_OSX_SYSROOT": "iphoneos",
         "MCLA_RUNTIME_ENABLED": "ON"
       }
+    },
+    {
+      "name": "ios16-launcher-only",
+      "displayName": "MCLA iOS 16 launcher-only ABI/UI compile probe",
+      "generator": "Xcode",
+      "binaryDir": "${sourceDir}/../out/build/ios16-launcher-only",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_SYSTEM_NAME": "iOS",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "16.0",
+        "CMAKE_OSX_SYSROOT": "iphoneos",
+        "MCLA_RUNTIME_ENABLED": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -118,6 +132,14 @@
     {
       "name": "ios16-device-release",
       "configurePreset": "ios16-device-release",
+      "configuration": "Release",
+      "targets": [
+        "MCLAApp"
+      ]
+    },
+    {
+      "name": "ios16-launcher-only",
+      "configurePreset": "ios16-launcher-only",
       "configuration": "Release",
       "targets": [
         "MCLAApp"
