@@ -183,7 +183,6 @@ static void MCLARegisterGraphicsDefaults(void) {
                                                  forKey:@"MCLAGraphicsSettingsSchema"];
         [NSUserDefaults.standardUserDefaults synchronize];
     }
-    NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
     if (![defaults dictionaryForKey:@"MCLAGraphicsBaseline"]) {
         NSMutableDictionary* baseline = [NSMutableDictionary dictionary];
         for (NSString* key in @[@"MCLARenderHeight", @"MCLAFSREnabled", @"MCLAFilterMode", @"MCLABloomMode", @"MCLADisableMotionBlur", @"MCLARetailMode", @"MCLAPerformanceOverlay"])
