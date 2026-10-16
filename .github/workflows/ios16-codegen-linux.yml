@@ -31,7 +31,7 @@ jobs:
           std::expected<int, int> probe() { return 42; }
           int main() { return probe().value() == 42 ? 0 : 1; }
           CPP
-          clang++-18 -std=c++23 /tmp/rex-expected.cpp -o /tmp/rex-expected
+          clang++-18 -std=c++23 -isystem /usr/include/c++/14 -isystem /usr/include/x86_64-linux-gnu/c++/14 -L/usr/lib/gcc/x86_64-linux-gnu/14 /tmp/rex-expected.cpp -o /tmp/rex-expected
           /tmp/rex-expected
       - name: Initialize pinned game codegen sources
         run: |
@@ -64,7 +64,9 @@ jobs:
           cmake -S MCLAApp/tools/rexglue_host -B MCLAApp/out/linux-codegen -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 \
-            -DCMAKE_C_FLAGS=-march=x86-64-v3 -DCMAKE_CXX_FLAGS=-march=x86-64-v3
+            -DCMAKE_C_FLAGS=-march=x86-64-v3 \
+            -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -isystem /usr/include/c++/14 -isystem /usr/include/x86_64-linux-gnu/c++/14" \
+            -DCMAKE_EXE_LINKER_FLAGS="-L/usr/lib/gcc/x86_64-linux-gnu/14"
       - name: Compile native Linux game code generator
         run: cmake --build MCLAApp/out/linux-codegen --target rexglue --parallel 4
       - name: Validate host binary and CLI
