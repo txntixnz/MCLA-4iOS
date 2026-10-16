@@ -70,3 +70,21 @@ unchanged. No generated game body or CPU archive is modified.
 The private test profile enables diagnostics once for its first launch; later
 user settings persist. This allows the existing bounded missing-shader capture
 path to collect real descriptor metadata if the unrepresented cases are hit.
+
+## Stage 13 build outcome
+
+The complete native runtime candidate passed compilation, final linking,
+ad-hoc signing verification, iOS-device ARM64/Mach-O deployment inspection,
+and all 604 Metal library target/hash checks. The downloaded IPA bytes were
+independently audited again. The original Stage 7 IPA's bundle identity was
+also checked directly and matches the candidate, retaining the existing
+preview data container on an update installation.
+
+The source pin is `7775db3e6cd4fa6760b68817f2de0ada03af1660`; the public
+launcher compilation check at that pin also passed. A duplicate local variable
+introduced in first-launch logging setup was corrected before this build.
+No source game assets or personal provisioning files are packaged.
+
+This is a **build result**, with device launch, GPU pipelines, rendering,
+gameplay, stability and frame rate still untested. Those checks require the
+user's first iPhone runtime attempt with the ISO already on the device.
