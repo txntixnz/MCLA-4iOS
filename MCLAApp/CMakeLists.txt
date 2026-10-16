@@ -233,6 +233,7 @@ if(MCLA_RUNTIME_ENABLED)
         runtime/MCLAAppleGraphicsHooks.cpp
         runtime/MCLANativeTitleBridge.cpp
         runtime/MCLABootstrapSubsystems.cpp
+        runtime/MCLALegacyAOTHooks.cpp
         runtime/MCLAAudioOutput.mm
         runtime/MCLAGraphicsFlags.cpp
         "${MCLA_REXGLUE_SDK_DIR}/src/input/absolute_pointer.cpp"

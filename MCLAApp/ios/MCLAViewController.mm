@@ -152,7 +152,16 @@ static void MCLARegisterGraphicsDefaults(void) {
         @"MCLAControlOverhaulTestEnabled": @YES,
         @"MCLATouchActiveControlsOverhaul": MCLAOverhaulControls(),
     }];
-    mcla::SetDiagnosticsEnabled(![NSUserDefaults.standardUserDefaults boolForKey:@"MCLARetailMode"]);
+    // Private bring-up profiles enable useful first-launch evidence once.
+    // Ordinary builds have no profile key; subsequent user choices persist.
+    NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
+    NSString* bringup = [NSBundle.mainBundle objectForInfoDictionaryKey:@"MCLABringupProfile"];
+    if ([bringup isKindOfClass:NSString.class] && bringup.length &&
+        ![[defaults stringForKey:@"MCLAAppliedBringupProfile"] isEqualToString:bringup]) {
+        [defaults setBool:NO forKey:@"MCLARetailMode"];
+        [defaults setObject:bringup forKey:@"MCLAAppliedBringupProfile"];
+    }
+    mcla::SetDiagnosticsEnabled(![defaults boolForKey:@"MCLARetailMode"]);
     // Explicit developer launches can capture without changing retail preferences.
     if ([NSProcessInfo.processInfo.environment[@"MCLA_AUDIT_CAPTURE"] boolValue])
         mcla::SetDiagnosticsEnabled(true);
