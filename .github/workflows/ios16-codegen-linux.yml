@@ -81,6 +81,49 @@ jobs:
           path.write_text(original.replace(needle, replacement))
           print("Enabled existing pinned clock_cast shim for Linux+libc++ host")
           PY
+      - name: Host-only float parsing fallback for libc++18
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path("theft4-foundation/glue/rexglue-sdk-main/include/rex/string/numeric.h")
+          s=path.read_text()
+          header="#include <charconv>"
+          assert s.count(header)==1
+          s=s.replace(header, header + "\n#include <cerrno>\n#include <cstdlib>\n#include <type_traits>")
+          old='''    auto [p, error] = std::from_chars(range.data(), range.data() + range.size(), result,
+                                      std::chars_format::general);
+    // TODO(gibbed): do something more with errors?
+    if (error != std::errc()) {
+      assert_always();
+      return T();
+    }'''
+          replacement='''#if defined(__linux__) && defined(_LIBCPP_VERSION)
+    // libc++18 on Ubuntu lacks floating std::from_chars; host-only codegen
+    // fallback with C-locale-compatible full-input/overflow checking.
+    std::string input(range);
+    char* end = nullptr;
+    errno = 0;
+    if constexpr (std::is_same_v<T, float>) {
+      result = std::strtof(input.c_str(), &end);
+    } else {
+      result = std::strtod(input.c_str(), &end);
+    }
+    if (errno == ERANGE || end != input.c_str() + input.size() || end == input.c_str()) {
+      assert_always();
+      return T();
+    }
+#else
+    auto [p, error] = std::from_chars(range.data(), range.data() + range.size(), result,
+                                      std::chars_format::general);
+    if (error != std::errc()) {
+      assert_always();
+      return T();
+    }
+#endif'''
+          assert s.count(old)==1, "Unexpected pinned SDK numeric parser source"
+          path.write_text(s.replace(old,replacement))
+          print("Applied Linux codegen-only numeric charconv fallback")
+          PY
       - name: Configure Linux host ReXGlue generator
         run: |
           cmake -S MCLAApp/tools/rexglue_host -B MCLAApp/out/linux-codegen -G Ninja \
