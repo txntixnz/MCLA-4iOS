@@ -22,16 +22,16 @@ jobs:
       - name: Install native compiler and build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-18 lld-18 ninja-build libssl-dev g++-14
+          sudo apt-get install -y -qq clang-18 lld-18 ninja-build libssl-dev libc++-18-dev libc++abi-18-dev libunwind-18-dev
           clang++-18 --version
           # Pinned SDK requires C++23 std::expected (GCC 13 headers can lack it).
-          g++-14 --version
+          # Match the successful Apple host build: use libc++, not libstdc++.
           cat > /tmp/rex-expected.cpp <<'CPP'
           #include <expected>
           std::expected<int, int> probe() { return 42; }
           int main() { return probe().value() == 42 ? 0 : 1; }
           CPP
-          clang++-18 -std=c++23 -isystem /usr/include/c++/14 -isystem /usr/include/x86_64-linux-gnu/c++/14 -L/usr/lib/gcc/x86_64-linux-gnu/14 /tmp/rex-expected.cpp -o /tmp/rex-expected
+          clang++-18 -std=c++23 -stdlib=libc++ /tmp/rex-expected.cpp -o /tmp/rex-expected
           /tmp/rex-expected
       - name: Initialize pinned game codegen sources
         run: |
@@ -65,8 +65,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 \
             -DCMAKE_C_FLAGS=-march=x86-64-v3 \
-            -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -isystem /usr/include/c++/14 -isystem /usr/include/x86_64-linux-gnu/c++/14" \
-            -DCMAKE_EXE_LINKER_FLAGS="-L/usr/lib/gcc/x86_64-linux-gnu/14"
+            -DCMAKE_CXX_FLAGS="-march=x86-64-v3 -stdlib=libc++" \
+            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++"
       - name: Compile native Linux game code generator
         run: cmake --build MCLAApp/out/linux-codegen --target rexglue --parallel 4
       - name: Validate host binary and CLI
@@ -81,6 +81,12 @@ jobs:
           mkdir -p output
           cp "$EXE" output/rexglue-linux-amd64
           chmod +x output/rexglue-linux-amd64
+          # Bundle the exact ABI libraries so the host tool can run in our
+          # private local execution environment without system installation.
+          for name in libc++.so.1 libc++abi.so.1 libunwind.so.1; do
+            so=$(ldconfig -p | grep -F "$name (" | head -1 | awk '{print $NF}')
+            if [ -n "$so" ] && [ -f "$so" ]; then cp -L "$so" "output/$name"; fi
+          done
           cp "$RUNNER_TEMP/codegen-help.txt" output/codegen-help.txt
           sha256sum output/rexglue-linux-amd64 | tee output/SHA256SUMS
       - name: Upload private-input-ready native code generator
