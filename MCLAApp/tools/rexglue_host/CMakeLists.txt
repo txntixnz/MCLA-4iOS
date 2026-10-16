@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MCLAReXGlueHostTools LANGUAGES C CXX OBJC OBJCXX)
+# Apple's host builds need Objective-C++; a Linux host codegen build does not.
+if(APPLE)
+    project(MCLAReXGlueHostTools LANGUAGES C CXX OBJC OBJCXX)
+else()
+    project(MCLAReXGlueHostTools LANGUAGES C CXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

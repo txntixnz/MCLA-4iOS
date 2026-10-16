@@ -1,0 +1,80 @@
+name: MCLA iOS 16 - Linux host game code generator
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios16-native-backport]
+    paths:
+      - '.github/workflows/ios16-codegen-linux.yml'
+      - 'MCLAApp/tools/rexglue_host/**'
+      - 'tools/apply_dependency_patches.sh'
+permissions:
+  contents: read
+jobs:
+  linux-codegen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+      - name: Install native compiler and build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-18 lld-18 ninja-build libssl-dev
+          clang++-18 --version
+      - name: Initialize pinned game codegen sources
+        run: |
+          set -euo pipefail
+          git submodule sync
+          git submodule update --init --depth 1 larecomp theft4-foundation
+          python3 - <<'PY'
+          import json, subprocess
+          lock=json.load(open('dependencies.lock.json'))
+          for key, location in [('larecomp', 'larecomp'), ('theft4-foundation', 'theft4-foundation')]:
+              sha=subprocess.check_output(['git','-C',location,'rev-parse','HEAD'], text=True).strip()
+              assert sha == lock[key]['commit'], (key, sha, lock[key]['commit'])
+              print(key, sha)
+          PY
+      - name: Initialize pinned ReXGlue third-party sources
+        run: |
+          set -euo pipefail
+          sdk=glue/rexglue-sdk-main/thirdparty
+          git -C theft4-foundation submodule sync
+          git -C theft4-foundation submodule update --init --depth 1 -- \
+            "$sdk/cli11" "$sdk/libmspack" "$sdk/FFmpeg" \
+            "$sdk/tomlplusplus" "$sdk/simde" "$sdk/xxHash" \
+            "$sdk/spdlog" "$sdk/fmt" "$sdk/snappy" \
+            "$sdk/utfcpp" "$sdk/imgui" "$sdk/sdl3" \
+            "$sdk/inja" "$sdk/o1heap"
+      - name: Apply pinned project compatibility patches
+        run: sh tools/apply_dependency_patches.sh
+      - name: Configure Linux host ReXGlue generator
+        run: |
+          cmake -S MCLAApp/tools/rexglue_host -B MCLAApp/out/linux-codegen -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+      - name: Compile native Linux game code generator
+        run: cmake --build MCLAApp/out/linux-codegen --target rexglue --parallel 4
+      - name: Validate host binary and CLI
+        run: |
+          set -euo pipefail
+          EXE=$(find MCLAApp/out/linux-codegen -type f -name rexglue -perm -111 | head -1)
+          test -n "$EXE"
+          file "$EXE"
+          ldd "$EXE"
+          "$EXE" codegen --help > "$RUNNER_TEMP/codegen-help.txt" 2>&1
+          cat "$RUNNER_TEMP/codegen-help.txt"
+          mkdir -p output
+          cp "$EXE" output/rexglue-linux-amd64
+          chmod +x output/rexglue-linux-amd64
+          cp "$RUNNER_TEMP/codegen-help.txt" output/codegen-help.txt
+          sha256sum output/rexglue-linux-amd64 | tee output/SHA256SUMS
+      - name: Upload private-input-ready native code generator
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCLA-ReXGlue-Linux-x64-Host-Codegen
+          path: output/
+          retention-days: 7
+          if-no-files-found: error
