@@ -7,15 +7,21 @@ using mcla::input::TriggerRange;
 static NSString* const ProfilesKey=@"MCLAControllerTriggerProfilesV1";
 @interface MCLATriggerState : NSObject {
 @public
-    std::array<TriggerRange,2> range{};
-    std::array<float,2> minimum{},maximum{};
-    std::array<uint8_t,2> guestMaximum{};
-    std::array<bool,2> seen{},needsRelease{};
-    bool suspended=false;
+    std::array<TriggerRange,2> range;
+    std::array<float,2> minimum,maximum;
+    std::array<uint8_t,2> guestMaximum;
+    std::array<bool,2> seen,needsRelease;
+    bool suspended;
 }
 @property(nonatomic,copy) NSString* identity;
 @end
 @implementation MCLATriggerState
+- (instancetype)init {
+    self=[super init];
+    if(self) { range={TriggerRange{},TriggerRange{}};minimum={};maximum={};
+        guestMaximum={};seen={};needsRelease={};suspended=false; }
+    return self;
+}
 @end
 
 namespace {
