@@ -8,6 +8,7 @@
 #include "MCLAResourceBindingReuse.h"
 #include "MCLAGeometryScratch.h"
 #include "MCLAVertexFixup.h"
+#include "MCLAVertexBounds.h"
 #include "MCLAActiveVertexStreams.h"
 #include "MCLAVertexConversionRecipe.h"
 #include "MCLAPackedTexture.h"
@@ -145,6 +146,22 @@ MTLVertexFormat VertexFormat(uint32_t t, uint32_t numeric, bool packedColorCorre
     return MTLVertexFormatUInt;
   default:
     return MTLVertexFormatInvalid;
+  }
+}
+unsigned VertexFormatBytes(MTLVertexFormat format) {
+  switch (format) {
+  case MTLVertexFormatFloat: case MTLVertexFormatUInt:
+  case MTLVertexFormatUChar4: case MTLVertexFormatUChar4Normalized:
+  case MTLVertexFormatUChar4Normalized_BGRA:
+  case MTLVertexFormatShort2: case MTLVertexFormatShort2Normalized:
+  case MTLVertexFormatUShort2Normalized: case MTLVertexFormatHalf2:
+  case MTLVertexFormatInt1010102Normalized: return 4;
+  case MTLVertexFormatFloat2: case MTLVertexFormatShort4:
+  case MTLVertexFormatShort4Normalized: case MTLVertexFormatUShort4Normalized:
+  case MTLVertexFormatHalf4: return 8;
+  case MTLVertexFormatFloat3: return 12;
+  case MTLVertexFormatFloat4: return 16;
+  default: return 0;
   }
 }
 unsigned HalfCount(uint32_t t) {
@@ -390,10 +407,11 @@ struct IndexBuffer {
   id<MTLBuffer> buffer = nil;
   uint32_t count = 0;
   uint64_t frame = 0;
+  mcla::metal::VertexIndexRange vertices{};
 };
 struct VertexUpload {
   id<MTLBuffer> buffer = nil;
-  size_t offset = 0;
+  size_t offset = 0, length = 0;
   explicit operator bool() const { return buffer != nil; }
 };
 struct DynamicVertexUpload {
@@ -404,6 +422,7 @@ struct DynamicVertexUpload {
 struct PreparedPipeline {
   id<MTLRenderPipelineState> pipeline=nil;
   std::array<bool,17> needed{};
+  std::array<uint32_t,17> strides{}, attributeEnds{};
 };
 struct DisplayTiming {
   std::mutex mutex;
@@ -575,6 +594,8 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   mcla::metal::ExactDrawKey<9> lastIndexKey_;
   Upload lastIndexUpload_{};
   uint32_t lastIndexCount_ = 0;
+  mcla::metal::VertexIndexRange lastIndexVertices_{};
+  uint64_t vertexBoundsRejected_ = 0;
   struct TextureGroup {
     mcla::metal::ExactDrawKey<95> key;
     mcla::metal::TextureGroupSnapshot usedSlots;
@@ -1888,7 +1909,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           if(cached->second.frame!=frames_)bufferIndex_.Touch(*alias,frames_);
           cached->second.frame = frames_;
           ++vertexAliasHits_;
-          return remember({cached->second.buffer, 0});
+          return remember({cached->second.buffer, 0, cached->second.buffer.length});
         }
         bufferIndex_.Erase(*alias);
       }
@@ -1934,7 +1955,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         ++vertexPayloadHits_;
         bufferIndex_.AddOwner(key,bind.buffer);
         bufferIndex_.BindAlias(key,wrapperKey);
-        return remember({cached->second.buffer, 0});
+        return remember({cached->second.buffer, 0, cached->second.buffer.length});
       }
     }
     auto vertexLease=vertexScratch_.Use(size,reuseGeometryScratch_);
@@ -2019,7 +2040,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       if (!upload.cpu)
         return {};
       memcpy(upload.cpu, data.data(), data.size());
-      VertexUpload result{upload.buffer, upload.offset};
+      VertexUpload result{upload.buffer, upload.offset, data.size()};
       DynamicVertexUpload cached{};
       cached.upload = result;
       if (locked && !inlineAddress)
@@ -2037,7 +2058,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     bufferIndex_.Touch(key,frames_);
     bufferIndex_.AddOwner(key,bind.buffer);
     bufferIndex_.BindAlias(key,wrapperKey);
-    return remember({buffer, 0});
+    return remember({buffer, 0, data.size()});
   }
   bool planVertexFixups_ = true;
   uint32_t visualExperiments_ = MCLAGraphicsVisualExperiments();
@@ -2114,6 +2135,11 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   bool Draw(uint32_t dev, uint32_t primitive, uint32_t start, uint32_t count,
             bool indexed, int32_t baseVertex, uint32_t data = 0,
             uint32_t stride = 0) {
+    if (!count) return true;
+    if (!indexed && uint64_t(start) + count - 1 > UINT32_MAX)
+      return Fail("vertex-index-overflow");
+    if (data && uint64_t(count) * stride > UINT32_MAX)
+      return Fail("inline-size");
     currentPrimitive_ = primitive;
     const bool sample=profile_ && ((draws_&63)==0);
     double stamp=sample?CACurrentMediaTime():0;
@@ -2177,6 +2203,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     key = Hash(decl.elements, decl.element_count * sizeof(ng::VertexElement),
                key);
     std::array<bool, 17> needed{};
+    std::array<uint32_t,17> strides{}, attributeEnds{};
     for (unsigned i = 0; i < vs->info->count; ++i) {
       auto a = vs->info->attributes[i];
       const ng::VertexElement *e = nullptr;
@@ -2212,7 +2239,11 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       vd.attributes[a.location].offset = e->offset;
       vd.attributes[a.location].bufferIndex = 9 + e->stream;
       vd.layouts[9 + e->stream].stride = step;
+      const unsigned bytes = VertexFormatBytes(format);
+      if (!bytes) {Fail("vertex-format-size");return {};}
       needed[e->stream] = true;
+      strides[e->stream] = step;
+      attributeEnds[e->stream] = std::max(attributeEnds[e->stream], uint32_t(e->offset) + bytes);
       uint64_t v = uint64_t(format) << 32 | step;
       key = Hash(&v, 8, key);
     }
@@ -2270,7 +2301,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       }
       pipelines_[key] = pipeline;
     }
-    PreparedPipeline result{pipeline,needed};prepared_[fastKey]=result;return result;
+    PreparedPipeline result{pipeline,needed,strides,attributeEnds};prepared_[fastKey]=result;return result;
     };
     auto prepared=prepare();if(!prepared.pipeline)return false;
     lastPipelineKey_.Remember(exactPipeline); lastPrepared_=prepared;
@@ -2528,13 +2559,17 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       return true;
     };
     mark(2);
+    std::array<size_t,17> vertexPayloadBytes{};
     for (unsigned s = 0; s < 17; ++s)
       if (needed[s]) {
         auto b =
             VertexBuffer(s, decl, *vs, data, data ? count * stride : 0, stride);
         if (!b)
           return Fail("vertex-buffer");
-        const size_t offset=b.offset+(data?0:streams_[s].offset);
+        const size_t streamOffset = data ? 0 : streams_[s].offset;
+        if (streamOffset > b.length) return Fail("vertex-offset");
+        vertexPayloadBytes[s] = b.length;
+        const size_t offset=b.offset+streamOffset;
         if(boundVertices_[s].buffer==b.buffer && boundVertices_[s].offset==offset)
           ++vertexBindSkips_;
         else {
@@ -2555,6 +2590,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto expansionLease=expandedIndexScratch_.Use(0,reuseGeometryScratch_);
     auto& idx=indexLease.values();
     auto& expanded=expansionLease.values();
+    mcla::metal::VertexIndexRange vertexIndices{};
     Upload persistentIndexUpload{};
     uint32_t persistentIndexCount = 0;
     bool persistentIndexHit = false, persistentIndexCandidate = false;
@@ -2570,6 +2606,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         persistentIndexCandidate=persistentIndexHit=true;
         persistentIndexUpload=lastIndexUpload_;
         persistentIndexCount=lastIndexCount_;
+        vertexIndices=lastIndexVertices_;
         ++indexReuses_;
       } else {
       auto m = ng::DecodeNativeBufferMetadata(R(p), R(p, 24), R(p, 28));
@@ -2595,6 +2632,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
             cached->second.frame = frames_;
             persistentIndexUpload = {cached->second.buffer, 0, nullptr};
             persistentIndexCount = cached->second.count;
+            vertexIndices = cached->second.vertices;
             persistentIndexHit = true;
           } else {
             indexBufferIndex_.Erase(*alias);
@@ -2644,6 +2682,33 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       indexed = true;
     }
     if (indexed) {
+      if (!persistentIndexHit) {
+        for (uint32_t index : idx) vertexIndices.Include(index);
+      }
+    } else {
+      const uint64_t last = uint64_t(start) + count - 1;
+      if (last > UINT32_MAX) return Fail("vertex-index-overflow");
+      vertexIndices.Include(start);
+      vertexIndices.Include(uint32_t(last));
+    }
+    if (vertexIndices.empty) return true;
+    // A legal index-buffer range can still contain vertices outside a stream.
+    // Keep these checks on every draw, including persistent index cache hits.
+    for (unsigned stream=0; stream<17; ++stream) if (needed[stream]) {
+      const size_t payloadBytes=vertexPayloadBytes[stream];
+      const uint32_t offset=data ? 0 : streams_[stream].offset;
+      if (!mcla::metal::VertexFetchFits(payloadBytes, offset,
+              prepared.strides[stream], prepared.attributeEnds[stream],
+              vertexIndices, indexed ? baseVertex : 0)) {
+        if (++vertexBoundsRejected_ <= 8)
+          REXLOG_ERROR("MCLA METAL vertex bounds stream={} payload={} offset={} stride={} end={} min={} max={} base={} vs={:016X} ps={:016X}",
+              stream, payloadBytes, offset, prepared.strides[stream],
+              prepared.attributeEnds[stream], vertexIndices.first, vertexIndices.last,
+              indexed ? baseVertex : 0, vs->info->hash, ps ? ps->info->hash : 0);
+        return Fail("vertex-fetch-range");
+      }
+    }
+    if (indexed) {
       Upload u{};
       uint32_t indexCount = 0;
       if (persistentIndexHit) {
@@ -2669,7 +2734,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
                                               options:MTLResourceStorageModeShared];
             if (!buffer)
               return Fail("index-buffer");
-            IndexBuffer entry{buffer, indexCount, frames_};
+            IndexBuffer entry{buffer, indexCount, frames_, vertexIndices};
             indexBuffers_[indexKey] = std::move(entry);
             indexBufferIndex_.Touch(indexKey,frames_);
             u = {buffer, 0, nullptr};
@@ -2692,6 +2757,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       if(persistentIndexCandidate) {
         lastIndexKey_.Remember(exactIndex);
         lastIndexUpload_=u; lastIndexCount_=indexCount;
+        lastIndexVertices_=vertexIndices;
       }
       if(hudSlices.empty()) {
         [encoder_ drawIndexedPrimitives:type indexCount:indexCount indexType:MTLIndexTypeUInt32
