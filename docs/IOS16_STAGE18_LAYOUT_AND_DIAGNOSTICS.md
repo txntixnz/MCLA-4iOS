@@ -61,6 +61,11 @@ the underlying device GPU recovery.
 
 Apple API reference: https://developer.apple.com/documentation/metal/mtlcommandbufferencoderinfoerrorkey
 
-The full native build must still audit all 13 strong title graphics hooks and
-all 604 unchanged shader libraries before delivery. Stage 18 device testing is
-pending.
+The full native ARM64/iOS 16 build and independent downloaded IPA audit passed:
+all 13 strong title graphics hooks and all 604 original library hashes are
+verified. Production UIKit editor/controller tests passed in simulator run
+39010595483, against the same MCLAApp tree as native build run 39010280951:
+ee49368210e239e118744544a12538b185e3a519. The initial UI harness was blocked by
+the clean simulator's first-run folder alert; preparing its empty data folder
+corrected test setup without changing shipping app code. Stage 18 device
+testing and GPU recovery reproduction remain pending.
