@@ -72,18 +72,20 @@ def varyings(text, vertex):
             result[key] = typ[1]
     return result
 
-def merge(base, work, out):
+def merge(base, work, out, expected_base_count=604):
     data = json.loads((work/'inputs.json').read_text())
     report = json.loads((base/'compatibility-report.json').read_text())
-    if report['compiler_passes'] != 604 or report['rejections'] or len(report['results']) != 604:
-        raise ValueError('Expected complete audited 604-library baseline')
+    if expected_base_count < 604 or report['compiler_passes'] != expected_base_count or report['rejections'] or len(report['results']) != expected_base_count:
+        raise ValueError(f'Expected complete audited {expected_base_count}-library baseline')
     for entry in report['results']:
         if sha(base/'libraries'/entry['library']) != entry['output_sha256']:
             raise ValueError('Baseline hash mismatch: '+entry['library'])
     shutil.copytree(base, out, dirs_exist_ok=True)
     original = {entry['library']:entry['output_sha256'] for entry in report['results']}
+    if len(original) != expected_base_count:
+        raise ValueError('Duplicate baseline library identity')
     generated = json.loads((work/'metal/manifest.json').read_text())
-    if {entry['shader'] for entry in generated} != set(data['missing']) or any('error' in entry for entry in generated):
+    if len(generated) != len(data['missing']) or {entry['shader'] for entry in generated} != set(data['missing']) or any('error' in entry for entry in generated):
         raise ValueError('Incomplete captured supplement')
     flat = work/'reflection'
     flat.mkdir(exist_ok=True)
@@ -129,18 +131,22 @@ def merge(base, work, out):
         if pair not in pairs: pairs.append(pair)
     for name,digest in original.items():
         if sha(out/'libraries'/name) != digest: raise ValueError('Original shader changed during merge')
+    if 'supplement' in report:
+        report.setdefault('supplement_history', []).append(report['supplement'])
     report.update(compiler_passes=len(report['results']), rejections=0,
-                  supplement={'added':len(added),'base_libraries_unchanged':604,
+                  supplement={'added':len(added),'base_libraries_unchanged':expected_base_count,
+                              'base_report_sha256':sha(base/'compatibility-report.json'),
                               'observed_pairs':pairs})
     (out/'compatibility-report.json').write_text(json.dumps(report,indent=2)+'\n')
     (out/'supplement-report.json').write_text(json.dumps({'added':added,'pairs':pairs},indent=2)+'\n')
-    print(f'Verified {len(added)} new shaders; all 604 original libraries unchanged.', flush=True)
+    print(f'Verified {len(added)} new shaders; all {expected_base_count} original libraries unchanged.', flush=True)
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     commands=parser.add_subparsers(dest='command',required=True)
     p=commands.add_parser('prepare');p.add_argument('inputs',type=Path);p.add_argument('out',type=Path)
     m=commands.add_parser('merge');m.add_argument('base',type=Path);m.add_argument('work',type=Path);m.add_argument('out',type=Path)
+    m.add_argument('--expected-base-count',type=int,default=604)
     args=parser.parse_args()
     if args.command=='prepare': prepare(args.inputs,args.out)
-    else: merge(args.base,args.work,args.out)
+    else: merge(args.base,args.work,args.out,args.expected_base_count)
