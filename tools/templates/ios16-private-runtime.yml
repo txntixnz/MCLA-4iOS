@@ -22,9 +22,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: txntixnz/MCLA-4iOS
-          ref: 7775db3e6cd4fa6760b68817f2de0ada03af1660
+          ref: 83eaf51c040d76d1f6cb2d7960589e10b5db66d2
           path: source
           submodules: false
+      - name: Test graphics hook linker bindings
+        working-directory: source
+        run: python3 tools/test_ios16_aot_graphics.py -v
       - name: Initialize pinned foundation dependencies
         working-directory: source
         run: |
@@ -106,12 +109,15 @@ jobs:
           set -euo pipefail
           APP=private-runtime-build/Release-iphoneos/MCLAApp.app
           test -f "$APP/MCLAApp"
+          cp private-runtime-build/mcla-aot-bindings/bindings.json out/graphics-bindings.json
+          python3 source/tools/ios16_bind_aot_graphics.py verify "$APP/MCLAApp" \
+            --bindings out/graphics-bindings.json --report out/graphics-hook-link-audit.json
           test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = '16.0'
           lipo "$APP/MCLAApp" -verify_arch arm64
           xcrun vtool -show-build "$APP/MCLAApp" | tee out/application-target.txt
           /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName MCLA iOS16 Native Test' "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 13' "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :MCLABringupProfile string ios16-native-stage13' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 14' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :MCLABringupProfile string ios16-native-stage14' "$APP/Info.plist"
           mkdir -p "$APP/OpenSourceNotices"
           cp -R source/licenses "$APP/OpenSourceNotices/"
           cp source/LICENSE source/CREDITS.md source/THIRD_PARTY_NOTICES.md "$APP/OpenSourceNotices/"
@@ -133,17 +139,17 @@ jobs:
           codesign --verify --strict "$APP"
           mkdir -p package/Payload
           ditto "$APP" package/Payload/MCLAApp.app
-          (cd package && zip -qry ../out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa Payload)
-          unzip -t out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa | tail -1
-          python3 source/tools/ios16_verify_runtime_ipa.py out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa \
+          (cd package && zip -qry ../out/MCLA_iOS16_STAGE14_GRAPHICS_BINDINGS.ipa Payload)
+          unzip -t out/MCLA_iOS16_STAGE14_GRAPHICS_BINDINGS.ipa | tail -1
+          python3 source/tools/ios16_verify_runtime_ipa.py out/MCLA_iOS16_STAGE14_GRAPHICS_BINDINGS.ipa \
             --shader-evidence private-shaders/private-shader-rebuild/compatibility-report.json \
             --json out/runtime_ipa_audit.json
-          shasum -a 256 out/MCLA_iOS16_NATIVE_RUNTIME_EXPERIMENTAL.ipa > out/ipa-sha256.txt
-          printf '%s\n' 'EXPERIMENTAL FULL RUNTIME: native game code and rebuilt shaders linked. Device rendering/gameplay untested. Conservative resource masks may reduce performance.' > out/STATUS.txt
+          shasum -a 256 out/MCLA_iOS16_STAGE14_GRAPHICS_BINDINGS.ipa > out/ipa-sha256.txt
+          printf '%s\n' 'STAGE 14: 13 graphics hooks bound to the actual XEO3 AOT symbols and audited after linking. Device rendering/gameplay needs a new test.' > out/STATUS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: MCLA-Private-iOS16-Native-Runtime-Candidate
+          name: MCLA-Private-iOS16-Stage14-Graphics-Bindings
           path: out
           compression-level: 9
           retention-days: 7
