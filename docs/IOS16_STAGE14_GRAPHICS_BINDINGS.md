@@ -34,4 +34,13 @@ Validation:
 - Negative tests reject missing, inconsistent, duplicate and mixed tables.
 - The new binary audit rejects the delivered Stage 13 executable and identifies
   its weak overrides, independently corroborating the device telemetry.
-- Updated iOS 16 compilation and real device rendering remain to be verified.
+- Full native ARM64/iOS 16 compilation, Apple signing verification and packaging
+  passed in private run `38985733583` using source
+  `83eaf51c040d76d1f6cb2d7960589e10b5db66d2`. Public launcher and linker tests
+  passed in run `38985712519`.
+- Independent downloaded-byte inspection confirms 13 strong native hooks, the
+  same preview bundle identity, and all 604 previously compiled shader hashes.
+  IPA SHA-256:
+  `05062040419d9901974d3e925c4ce4ef0bb28006c5dd3df8b1f7dc46eb0299ab`.
+- Real device rendering needs a new test; connectivity checks do not establish
+  GPU execution, correct imagery, gameplay or frame rate.
