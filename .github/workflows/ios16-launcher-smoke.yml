@@ -16,6 +16,9 @@ on:
       - 'MCLAApp/Resources/GameDataManifest.json'
       - 'tools/ios16_bind_aot_graphics.py'
       - 'tools/test_ios16_aot_graphics.py'
+      - 'MCLAApp/runtime/MCLAShaderLibraryBytes.h'
+      - 'MCLAApp/runtime/MCLAMetalLibrary.h'
+      - 'tools/test_mcla_metal_library.mm'
       - '.github/workflows/ios16-launcher-smoke.yml'
 jobs:
   build-launcher:
@@ -29,6 +32,11 @@ jobs:
           cmake --version
       - name: Check native graphics hook linker bindings
         run: python3 tools/test_ios16_aot_graphics.py -v
+      - name: Stress the owned-byte Metal loader with limited file descriptors
+        run: |
+          xcrun clang++ -std=c++23 -fobjc-arc -fblocks tools/test_mcla_metal_library.mm \
+            -framework Foundation -framework Metal -o /tmp/mcla-library-test
+          /tmp/mcla-library-test
       - name: Configure native iOS 16 ARM64 launcher
         run: |
           cmake --preset ios16-launcher-only -S MCLAApp \

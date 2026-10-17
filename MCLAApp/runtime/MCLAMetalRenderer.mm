@@ -29,6 +29,7 @@
 #include "MCLAGraphicsFoundation.h"
 #include "MCLABootstrapSubsystems.h"
 #include "MCLAMetalHelpers.h"
+#include "MCLAMetalLibrary.h"
 #include "MCLANativeRenderer.h"
 #include "MCLAQuadVertexFetch.h"
 #include "MCLARuntimeBootstrap.h"
@@ -355,6 +356,7 @@ struct Shader {
   const MCLAMetalShaderInfo *info = nullptr;
   id<MTLLibrary> library = nil;
   std::map<uint32_t, id<MTLFunction>> functions;
+  uint32_t libraryFailures = 0, functionFailures = 0;
 };
 struct Texture {
   id<MTLTexture> image = nil;
@@ -1036,7 +1038,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (found == shaderHandles_.end())
       return nullptr;
     auto &s = shaders_[found->second];
-    if (s.info)
+    if (s.info && s.library)
       return &s;
     for (auto &i : kMCLAMetalShaders)
       if (i.hash == found->second) {
@@ -1052,10 +1054,11 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
                                          withExtension:@"metallib"
                                           subdirectory:@"MCLAMetalShaders"];
     NSError *e = nil;
-    s.library = [device_ newLibraryWithURL:url error:&e];
+    s.library = mcla::metal::NewLibraryFromFileBytes(device_, url, &e);
     if (!s.library) {
-      REXLOG_ERROR("MCLA METAL library {}: {}", name.UTF8String,
-                   e.localizedDescription.UTF8String);
+      if (++s.libraryFailures <= 3)
+        REXLOG_ERROR("MCLA METAL library {}: {}", name.UTF8String,
+                     e.localizedDescription.UTF8String);
       return nullptr;
     }
     return &s;
@@ -1070,9 +1073,12 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto fn = [s.library newFunctionWithName:@"shaderMain"
                               constantValues:values
                                        error:&error];
-    if (!fn)
-      REXLOG_ERROR("MCLA METAL function: {}",
-                   error.localizedDescription.UTF8String);
+    if (!fn) {
+      if (++s.functionFailures <= 3)
+        REXLOG_ERROR("MCLA METAL function: {}",
+                     error.localizedDescription.UTF8String);
+      return nil;
+    }
     s.functions[spec] = fn;
     return fn;
   }
@@ -2197,6 +2203,12 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto pd = [MTLRenderPipelineDescriptor new];
     pd.vertexFunction = Function(*vs, 0);
     pd.fragmentFunction = ps ? Function(*ps, spec) : nil;
+    // Metal asserts on a missing required function before returning NSError.
+    // A failed load/function must remain retryable and never reach validation.
+    if (!pd.vertexFunction || (ps && !pd.fragmentFunction)) {
+      Fail("shader-function");
+      return {};
+    }
     pd.vertexDescriptor = vd;
     pd.rasterSampleCount = 1;
     const unsigned blendOffsets[] = {10552, 10584, 10588, 10592};
@@ -3582,7 +3594,7 @@ public:
     }
     { // Load even if FSR starts off: the presentation switch is now live.
       NSURL* path=[[NSBundle mainBundle] URLForResource:@"MCLAFsr" withExtension:@"metallib"];
-      fsr_=[device_ newLibraryWithURL:path error:&error];
+      fsr_=mcla::metal::NewLibraryFromFileBytes(device_,path,&error);
       if(!fsr_){REXLOG_ERROR("MCLA FSR library: {}",error.localizedDescription.UTF8String);return 0xC0000001;}
       auto sampler=[MTLSamplerDescriptor new];
       sampler.minFilter=sampler.magFilter=MTLSamplerMinMagFilterLinear;
@@ -3600,7 +3612,7 @@ public:
     if (smaaEnabled_) {
       NSURL *path = [[NSBundle mainBundle] URLForResource:@"MCLASmaa"
                                            withExtension:@"metallib"];
-      smaa_ = [device_ newLibraryWithURL:path error:&error];
+      smaa_ = mcla::metal::NewLibraryFromFileBytes(device_,path,&error);
       if (!smaa_) {
         REXLOG_ERROR("MCLA SMAA Lab library: {}", error.localizedDescription.UTF8String);
         return 0xC0000001;
