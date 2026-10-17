@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+namespace rex::runtime { class FunctionDispatcher; }
+
 struct MCLAAppleGraphicsHookReport {
     uint64_t drawIndexed = 0;
     uint64_t draw = 0;
@@ -25,3 +27,4 @@ struct MCLAAppleGraphicsHookReport {
 };
 
 void MCLAGetAppleGraphicsHookReport(MCLAAppleGraphicsHookReport* report);
+bool MCLAValidateAppleGraphicsHookBindings(rex::runtime::FunctionDispatcher* dispatcher);

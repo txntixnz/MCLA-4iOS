@@ -1,16 +1,20 @@
 #include <rex/ppc.h>
 #include <rex/memory.h>
+#include <rex/logging.h>
+#include <rex/system/function_dispatcher.h>
 
 #include <atomic>
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <iterator>
 #include <vector>
 
 #include "MCLAAppleGraphicsHooks.h"
 #include "MCLAGraphicsFoundation.h"
 #include "MCLANativeTitleBridge.h"
 #include "MCLANativeRenderer.h"
+#include "MCLAAOTGraphicsBindings.h"
 
 namespace {
 
@@ -311,3 +315,23 @@ extern "C" REX_FUNC(D3DResource_Release) {
     if (!ctx.r3.u32) MCLANativeResourceRelease(resource);
 }
 #endif
+
+bool MCLAValidateAppleGraphicsHookBindings(rex::runtime::FunctionDispatcher* dispatcher) {
+    if (!dispatcher) return false;
+    struct HookBinding { uint32_t address; PPCFunc* function; const char* name; };
+#define MCLA_HOOK_BINDING(address, function, name) {address, function, name},
+    const HookBinding bindings[] = {
+        MCLA_FOR_EACH_AOT_GRAPHICS_HOOK(MCLA_HOOK_BINDING)
+    };
+#undef MCLA_HOOK_BINDING
+    for (const auto& binding : bindings) {
+        if (dispatcher->GetFunction(binding.address) != binding.function) {
+            REXLOG_ERROR("MCLA graphics hook disconnected: {} at {:08X}",
+                         binding.name, binding.address);
+            return false;
+        }
+    }
+    REXLOG_INFO("MCLA graphics hook bindings verified: {} hooks, {} AOT names",
+                 std::size(bindings), MCLA_AOT_GRAPHICS_NAMING);
+    return true;
+}

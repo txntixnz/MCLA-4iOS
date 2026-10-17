@@ -14,6 +14,8 @@ on:
       - 'MCLAApp/ios/MCLALauncherView.h'
       - 'MCLAApp/ios/MCLALauncherView.mm'
       - 'MCLAApp/Resources/GameDataManifest.json'
+      - 'tools/ios16_bind_aot_graphics.py'
+      - 'tools/test_ios16_aot_graphics.py'
       - '.github/workflows/ios16-launcher-smoke.yml'
 jobs:
   build-launcher:
@@ -25,6 +27,8 @@ jobs:
         run: |
           xcodebuild -version
           cmake --version
+      - name: Check native graphics hook linker bindings
+        run: python3 tools/test_ios16_aot_graphics.py -v
       - name: Configure native iOS 16 ARM64 launcher
         run: |
           cmake --preset ios16-launcher-only -S MCLAApp \

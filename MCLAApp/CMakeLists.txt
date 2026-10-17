@@ -58,6 +58,30 @@ if(MCLA_RUNTIME_ENABLED)
             "Run the MCLA codegen preparation step first.")
     endif()
 
+    # XEO3 uses rex_sub_ADDRESS where the desktop manifest uses D3D names.
+    # Check both dispatch tables and bind the overrides to the actual symbols,
+    # including when reusing a compiled archive.
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(MCLA_AOT_BINDINGS_DIR "${CMAKE_CURRENT_BINARY_DIR}/mcla-aot-bindings")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/ios16_bind_aot_graphics.py"
+        "${MCLA_GENERATED_DIR}/larecomp_init.h"
+        "${MCLA_GENERATED_DIR}/larecomp_init.cpp"
+        "${MCLA_GENERATED_DIR}/larecomp_register.cpp")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/../tools/ios16_bind_aot_graphics.py"
+                generate "${MCLA_GENERATED_DIR}"
+                --header "${MCLA_AOT_BINDINGS_DIR}/MCLAAOTGraphicsBindings.h"
+                --report "${MCLA_AOT_BINDINGS_DIR}/bindings.json"
+        RESULT_VARIABLE MCLA_AOT_BINDINGS_RESULT
+        OUTPUT_VARIABLE MCLA_AOT_BINDINGS_OUTPUT
+        ERROR_VARIABLE MCLA_AOT_BINDINGS_ERROR)
+    if(NOT MCLA_AOT_BINDINGS_RESULT EQUAL 0)
+        message(FATAL_ERROR "AOT graphics hook binding failed: ${MCLA_AOT_BINDINGS_ERROR}")
+    endif()
+    message(STATUS "MCLA: ${MCLA_AOT_BINDINGS_OUTPUT}")
+
     # Reuse the proven Theft4 ReXGlue kernel/runtime foundation without
     # enabling its GTA-specific renderer or modifying the reference checkout.
     set(REXGLUE_CORE_ONLY ON CACHE BOOL "" FORCE)
@@ -252,6 +276,7 @@ target_include_directories(MCLAApp PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/ios"
     "${CMAKE_CURRENT_SOURCE_DIR}/runtime"
     "${MCLA_REXGLUE_SDK_DIR}/src/input"
+    "${MCLA_AOT_BINDINGS_DIR}"
 )
 
 set_source_files_properties(runtime/MCLAAudioOutput.mm

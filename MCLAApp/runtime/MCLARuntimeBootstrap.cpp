@@ -546,6 +546,10 @@ void RunRuntime(std::filesystem::path gameRoot,
             throw std::runtime_error("default.xex or Xbox import resolution failed.");
         }
 
+        if (!MCLAValidateAppleGraphicsHookBindings(runtime.function_dispatcher())) {
+            throw std::runtime_error("The compiled game's native graphics hooks are disconnected.");
+        }
+
         if (PPCImageConfig.rexcrt_heap &&
             !rex::kernel::crt::InitHeap(REXCVAR_GET(rexcrt_heap_size_mb),
                                         runtime.memory())) {
