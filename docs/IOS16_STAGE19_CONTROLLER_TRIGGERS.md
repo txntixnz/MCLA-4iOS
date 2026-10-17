@@ -49,3 +49,11 @@ library hashes,13 strong graphics hooks, bundle/profile/build19 and new feature
 markers in the packaged executable. The Xbox touch-layout capture is
 byte-identical to Stage18. The new trigger screen was visually inspected.
 Physical-controller calibration and gameplay remain pending user testing.
+
+## Subsequent device feedback
+
+The user identified the BSP D10's trigger endpoint as the cause and corrected it
+with an end deadzone in GameSpace. The latest build19 controller snapshot reaches
+raw1.0 and mapped255 for both triggers with default MCLA calibration. Keep the
+MCLA defaults to avoid stacking corrections. The user confirms good gameplay;
+Stage20 follows up on captured shader gaps and recovered GPU read faults.
