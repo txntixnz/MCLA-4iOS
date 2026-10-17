@@ -19,10 +19,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--source', type=Path,
     default=ROOT / 'artifacts/mcla-alu-order-compiled/hlsl',
     help='Audited ALU-order sources (generate with regenerate_mcla_alu_shaders.py)')
-SOURCE = parser.parse_args().source
-if len(list(SOURCE.glob('*.hlsl'))) < 534:
+parser.add_argument('--output', type=Path, default=ROOT / 'artifacts/mcla-metal-shaders')
+parser.add_argument('--header', type=Path, default=ROOT / 'MCLAApp/generated/mcla_metal_shader_info.h')
+parser.add_argument('--allow-partial-corpus', action='store_true',
+    help='Compile an explicit captured supplement; caller must merge with the audited corpus')
+ARGS = parser.parse_args()
+SOURCE = ARGS.source
+if not list(SOURCE.glob('*.hlsl')) or (not ARGS.allow_partial_corpus and len(list(SOURCE.glob('*.hlsl'))) < 534):
     raise SystemExit(f'{SOURCE}: expected at least 534 audited shader sources')
-OUT = ROOT / 'artifacts/mcla-metal-shaders'
+OUT = ARGS.output
 OUT.mkdir(parents=True, exist_ok=True)
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 
@@ -201,5 +206,6 @@ for r in results:
     masks = ','.join('0x%016Xull' % value for value in r['constants'])
     header.append('{0x%sull,%s,0x%Xu,0x%Xu,{%s},%d,{%s}},' % (r['hash'], str(r['vertex']).lower(), r['textures'], r['colors'], masks, len(fields), ','.join(fields)))
 header += ['};', '']
-(ROOT / 'MCLAApp/generated/mcla_metal_shader_info.h').write_text('\n'.join(header))
+ARGS.header.parent.mkdir(parents=True, exist_ok=True)
+ARGS.header.write_text('\n'.join(header))
 print(f'Compiled {len(results)} direct Metal libraries; no SPIR-V runtime.', flush=True)

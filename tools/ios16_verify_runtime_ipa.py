@@ -68,9 +68,12 @@ def inspect_executable(data):
 
 def verify(path, shader_evidence):
     expected = json.loads(shader_evidence.read_text())
-    if expected.get('compiler_passes') != 604 or expected.get('rejections') != 0:
+    count = expected.get('compiler_passes', 0)
+    if not isinstance(count, int) or count < 604 or expected.get('rejections') != 0 or len(expected.get('results', [])) != count:
         raise ValueError('Expected complete private shader compilation evidence')
     by_name = {item['library']: item['output_sha256'] for item in expected['results']}
+    if len(by_name) != count or 'MCLAFsr.metallib' not in by_name:
+        raise ValueError('Duplicate or incomplete shader evidence')
     with zipfile.ZipFile(path) as archive:
         if archive.testzip() is not None:
             raise ValueError('IPA CRC check failed')
@@ -98,8 +101,8 @@ def verify(path, shader_evidence):
             raise ValueError('Invalid executable path')
         result = inspect_executable(archive.read(root + executable))
         libraries = [name for name in names if name.endswith('.metallib')]
-        if len(libraries) != 604:
-            raise ValueError('Expected 603 title libraries and FSR')
+        if len(libraries) != count or {name.removeprefix(root) for name in libraries} != set(by_name):
+            raise ValueError('Packaged shader corpus does not match complete compiler evidence')
         for name in libraries:
             relative = name.removeprefix(root)
             data = archive.read(name)
@@ -111,7 +114,7 @@ def verify(path, shader_evidence):
                 raise ValueError(f'Missing native metadata: {name}')
     result.update(status='PASS', ipa=path.name,
         ipa_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-        bundle_identifier=info['CFBundleIdentifier'], metal_libraries=604,
+        bundle_identifier=info['CFBundleIdentifier'], metal_libraries=count,
         shader_hashes_match_compiler_evidence=True, source_game_files_included=False,
         experimental=True, resource_masks_conservative=True,
         device_launch_tested=False, gameplay_tested=False, performance_tested=False)
