@@ -28,15 +28,34 @@ runtime=$(xcrun simctl list runtimes -j | python3 -c 'import sys,json; r=[r for 
 device=$(xcrun simctl create MCLA-Controller-UI com.apple.CoreSimulator.SimDeviceType.iPhone-13-Pro-Max "$runtime")
 trap 'xcrun simctl shutdown "$device" >/dev/null 2>&1 || true; xcrun simctl delete "$device" >/dev/null 2>&1 || true' EXIT
 xcrun simctl boot "$device"
-xcrun simctl bootstatus "$device" -b
+python3 - "$device" "$out" <<'PYTHON'
+import subprocess,sys,pathlib
+p=pathlib.Path(sys.argv[2])/'simulator-boot.log'
+with p.open('w') as f:
+    try: subprocess.run(['xcrun','simctl','bootstatus',sys.argv[1],'-b'],stdout=f,stderr=subprocess.STDOUT,check=True,timeout=240)
+    except BaseException:
+        print(p.read_text()[-12000:]);raise
+PYTHON
 xcrun simctl install "$device" "$app"
 python3 - "$device" "$out" <<'PYTHON'
-import subprocess,sys,pathlib,shutil
+import subprocess,sys,pathlib,shutil,time
+
 device,out=sys.argv[1],pathlib.Path(sys.argv[2])
-run=subprocess.run(['xcrun','simctl','launch','--console',device,'com.txntixnz.mcla.controller-uitest'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=90)
-(out/'controller-ui.log').write_text(run.stdout)
-print(run.stdout[-14000:])
-assert 'MCLA_CONTROLLER_UI_TEST PASS:' in run.stdout,'Controller UI regression did not pass'
-container=subprocess.check_output(['xcrun','simctl','get_app_container',device,'com.txntixnz.mcla.controller-uitest','data'],text=True).strip()
-shutil.copyfile(pathlib.Path(container)/'Documents/xbox-touch-layout.png',out/'xbox-touch-layout.png')
+bundle='com.txntixnz.mcla.controller-uitest'
+# File output avoids waiting for inherited console pipes after an app exits.
+run=subprocess.run(['xcrun','simctl','launch','--stdout='+str(out/'app-stdout.log'),'--stderr='+str(out/'app-stderr.log'),device,bundle],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=30)
+print(run.stdout)
+assert run.returncode==0,'Unable to launch controller UI test'
+container=subprocess.check_output(['xcrun','simctl','get_app_container',device,bundle,'data'],text=True).strip()
+documents=pathlib.Path(container)/'Documents'
+result=documents/'controller-ui-result.txt'
+for attempt in range(90):
+    if result.exists():break
+    time.sleep(1)
+logs='\n'.join(p.read_text(errors='replace') for p in out.glob('app-*.log'))
+(out/'controller-ui.log').write_text(logs)
+print(logs[-14000:])
+assert result.exists() and 'MCLA_CONTROLLER_UI_TEST PASS' in result.read_text(),'Controller UI regression did not pass'
+print(result.read_text())
+shutil.copyfile(documents/'xbox-touch-layout.png',out/'xbox-touch-layout.png')
 PYTHON
