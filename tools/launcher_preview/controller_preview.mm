@@ -112,7 +112,7 @@ bool MCLAControlPreviewRightStickActive();
     [defaults setBool:YES forKey:@"MCLATouchEnabledControlOverhaulTest"];
     [self refreshTouchInputForGameVisible:YES];
     [self resetTouchLayout];
-    assert([[defaults dictionaryForKey:@"MCLATouchLayoutPositionsOverhaul"] isEqual:@{@"steer":@[@.35,@.60]}]);
+    assert(([[defaults dictionaryForKey:@"MCLATouchLayoutPositionsOverhaul"] isEqual:@{@"steer":@[@.35,@.60]}]));
     assert([[defaults arrayForKey:@"MCLATouchActiveControlsXbox"] count]==14);
     NSLog(@"MCLA_CONTROLLER_UI_TEST PASS: preconnected pad, hot connect/disconnect, held-input release, late-event rejection, edit/background safety, disabled-touch preference, Xbox buttons/spacing/artwork and saved-layout isolation");
     exit(0);
