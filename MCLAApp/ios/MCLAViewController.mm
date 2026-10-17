@@ -154,6 +154,7 @@ static void MCLARegisterGraphicsDefaults(void) {
         @"MCLAFilterMode": @2,
         @"MCLABloomMode": @0,
         @"MCLAPerformanceOverlay": @YES,
+        @"MCLAAutomaticShaders": @YES,
         @"MCLARetailMode": UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone ? @YES : @NO,
         @"MCLADisableMotionBlur": @NO,
         @"MCLADisableDepthOfField": @NO,
@@ -652,7 +653,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 4) return 1;
     if (section == 2) return 2;
-    if (section == 0) return 2;
+    if (section == 0 || section == 4) return 2;
     if (section == 1) {
 #if MCLA_SMAA_LAB
         return 5;
@@ -666,7 +667,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     return @[@"Display", @"Image & Effects", @"Play Mode", @"Performance", @"Experimental"][section];
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
-    if (section == 4) return @"60 FPS is under evaluation and needs more performance headroom. Off by default; apply on the next launch. 30 FPS is the standard target.";
+    if (section == 4) return @"Automatic Shaders applies after reopening MCLA. New effects may briefly appear while preparing. 60 FPS needs more performance headroom; 30 FPS remains the standard target.";
     if (section == 0) return self.settingsLocked ? @"Close and relaunch to change scene resolution. Upscaling can change during play." : @"720p gives the most room for a steady 30 FPS. Upscaling sharpens the image to fit your screen.";
     if (section == 1) return @"Filtering, bloom, motion blur and depth of field apply on the next launch.";
     if (section == 2) return @"Play Mode settings apply on the next launch. Skip Intro Videos is on by default.";
@@ -709,11 +710,14 @@ static void MCLARegisterGraphicsDefaults(void) {
         title = @"SMAA · High"; detail = @"Smooth edges before upscaling"; icon = @"triangle";
         key = @"MCLASMAAEnabled"; action = @selector(smaaChanged:); on = [defaults boolForKey:key];
     } else if (path.section == 2 && path.row == 0) {
-        title = @"Retail Mode"; detail = @"Play without diagnostic logging or captures"; icon = @"steeringwheel";
+        title = @"Retail Mode"; detail = @"Play with reduced diagnostic overhead"; icon = @"steeringwheel";
         key = @"MCLARetailMode"; action = @selector(retailModeChanged:); on = [defaults boolForKey:key];
     } else if (path.section == 2) {
         title = @"Skip Intro Videos"; detail = @"Go straight past startup movies"; icon = @"forward.end";
         key = @"MCLASkipIntro"; action = @selector(skipIntroChanged:); on = [defaults boolForKey:key];
+    } else if (path.section == 4 && path.row == 1) {
+        title = @"Automatic Shaders";detail=@"Prepare newly encountered effects on this device";
+        icon=@"sparkles";key=@"MCLAAutomaticShaders";action=@selector(automaticGenerationChanged:);on=[defaults boolForKey:key];
     } else if (path.section == 4) {
         title = @"Native 60 FPS";
         detail = @"Experimental · Real frame timing with camera and suspension corrections; may increase heat";
@@ -786,6 +790,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self saveSwitch:sender key:@"MCLARetailMode"];
     mcla::SetDiagnosticsEnabled(!sender.on); [self.tableView reloadData];
 }
+- (void)automaticGenerationChanged:(UISwitch*)sender { if(!self.settingsLocked)[self saveSwitch:sender key:@"MCLAAutomaticShaders"]; }
 - (void)performanceOverlayChanged:(UISwitch*)sender { [self saveSwitch:sender key:@"MCLAPerformanceOverlay"]; }
 - (void)fsrChanged:(UISwitch*)sender {
     [self saveSwitch:sender key:@"MCLAFSREnabled"]; MCLAGraphicsSetFSREnabled(sender.on);
@@ -892,6 +897,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 @property(nonatomic, strong) UIButton* controlsButton;
 @property(nonatomic, strong) UIButton* editButton;
 @property(nonatomic, strong) UILabel* layoutHint;
+@property(nonatomic, strong) UILabel* shaderProgress;
 @property(nonatomic, strong) MCLAControlResizeGesture* controlResize;
 @property(nonatomic, assign) BOOL exportedControlLayout;
 @property(nonatomic, assign) CFTimeInterval nextAuditCapture;
@@ -1163,6 +1169,22 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self.view addGestureRecognizer:self.controlResize];
     self.motionManager = [[CMMotionManager alloc] init];
     self.motionManager.deviceMotionUpdateInterval = 1.0 / 60.0;
+    self.shaderProgress=[[UILabel alloc] init];
+    self.shaderProgress.translatesAutoresizingMaskIntoConstraints=NO;
+    self.shaderProgress.textAlignment=NSTextAlignmentCenter;
+    self.shaderProgress.font=[UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    self.shaderProgress.textColor=UIColor.whiteColor;
+    self.shaderProgress.backgroundColor=[UIColor.blackColor colorWithAlphaComponent:0.65];
+    self.shaderProgress.layer.cornerRadius=8;self.shaderProgress.clipsToBounds=YES;
+    self.shaderProgress.userInteractionEnabled=NO;self.shaderProgress.hidden=YES;
+    [self.view addSubview:self.shaderProgress];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.shaderProgress.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.shaderProgress.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
+        [self.shaderProgress.widthAnchor constraintEqualToConstant:190],
+        [self.shaderProgress.heightAnchor constraintEqualToConstant:28]]];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(automaticShadersChanged:)
+        name:@"MCLAAutomaticShadersChanged" object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self
         selector:@selector(appWillResignActive:)
         name:UIApplicationWillResignActiveNotification object:nil];
@@ -2153,6 +2175,12 @@ static void MCLARegisterGraphicsDefaults(void) {
                    dispatch_get_main_queue(), ^{
         MCLASetVirtualGamepadButton(buttonMask, false);
     });
+}
+
+- (void)automaticShadersChanged:(NSNotification*)note {
+    const unsigned pending=[note.userInfo[@"pending"] unsignedIntValue];
+    self.shaderProgress.hidden=pending==0;
+    self.shaderProgress.text=[NSString stringWithFormat:@"Preparing shaders · %u",pending];
 }
 
 - (void)dealloc {

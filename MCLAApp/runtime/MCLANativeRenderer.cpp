@@ -29,6 +29,7 @@
 #include <shader/shader_cache.h>
 #if MCLA_DIRECT_METAL
 #include "mcla_metal_shader_info.h"
+#include "MCLAAutomaticShaders.h"
 #endif
 #include <gta4_frame_limiter.h>
 #include <dispatch/dispatch.h>
@@ -180,9 +181,10 @@ uint32_t Shader(uint64_t hash,bool vertex) {
   if(!hash) return 0;
   auto found=shaders.find(hash); if(found!=shaders.end())return found->second;
 #if MCLA_DIRECT_METAL
-  const auto entry=std::find_if(std::begin(kMCLAMetalShaders),std::end(kMCLAMetalShaders),
+  const auto bundled=std::find_if(std::begin(kMCLAMetalShaders),std::end(kMCLAMetalShaders),
       [hash,vertex](const auto& shader){return shader.hash==hash && shader.vertex==vertex;});
-  if(entry==std::end(kMCLAMetalShaders)) {
+  const auto* entry=bundled==std::end(kMCLAMetalShaders)?mcla::shader::ReadyInfo(hash,vertex):&*bundled;
+  if(!entry) {
 #else
   auto* entry=std::lower_bound(g_shaderCacheEntries,g_shaderCacheEntries+g_shaderCacheEntryCount,hash,
      [](const ShaderCacheEntry& e,uint64_t h){return e.hash<h;});
@@ -194,11 +196,12 @@ uint32_t Shader(uint64_t hash,bool vertex) {
       REXLOG_ERROR("MCLA native shader missing stage={} hash={:016X}",vertex?"vs":"ps",hash);
     return 0;
   }
+  (vertex?missingVertexShaders:missingPixelShaders).erase(hash);
   uint32_t handle=nextShader++;
   ng::RegisterShaderCommand c; c.shader=handle;c.hash=hash;c.stage=vertex?ng::ShaderStage::kVertex:ng::ShaderStage::kPixel;
   if(!Submit(c))return 0;
 #if MCLA_DIRECT_METAL
-  if(vertex)shaderInputs.emplace(hash,&*entry);
+  if(vertex)shaderInputs.emplace(hash,entry);
 #endif
   shaders.emplace(hash,handle);return handle;
 }
@@ -322,7 +325,7 @@ bool MCLANativeDraw(const uint8_t* base,uint32_t dev,uint32_t prim,uint32_t coun
   const auto* device=P(base,dev);
   const uint32_t v=Shader(vs,true),p=Shader(ps,false);
   if(!v || (ps&&!p))return
-      mcla::DiagnosticsEnabled() &&
+      (mcla::DiagnosticsEnabled() || mcla::shader::Enabled()) &&
       (missingVertexShaders.contains(vs) || missingPixelShaders.contains(ps)) &&
       missingCaptureBudget.Take(vs,ps);
   auto bindShader=[&](uint32_t handle,uint32_t& last,ng::CommandType type){if(handle==last)return;

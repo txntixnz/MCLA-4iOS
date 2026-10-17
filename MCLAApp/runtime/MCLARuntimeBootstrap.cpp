@@ -477,8 +477,7 @@ void RunRuntime(std::filesystem::path gameRoot,
         std::filesystem::create_directories(supportRoot / "saves");
         const std::string nativeCaptureRoot =
             (supportRoot / "native-capture").string();
-        if (mcla::DiagnosticsEnabled())
-            MCLANativeTitleBridgeSetCaptureRoot(nativeCaptureRoot.c_str());
+        MCLANativeTitleBridgeSetCaptureRoot(nativeCaptureRoot.c_str());
 
         // Opt-in, one-request-at-a-time GPU readback using Theft4's fenced
         // diagnostic path. Default launches do not allocate capture buffers.

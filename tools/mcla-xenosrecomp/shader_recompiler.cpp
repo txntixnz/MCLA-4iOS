@@ -238,7 +238,7 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
         print("(float{})(", size);
 
     auto findResult = vertexElements.find(address);
-    assert(findResult != vertexElements.end());
+    if (findResult == vertexElements.end()) throw std::runtime_error("Missing vertex fetch metadata");
 
     switch (findResult->second.usage)
     {
@@ -635,13 +635,13 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
                     }
                     else
                     {
-                        assert(!instr.const0Relative && !instr.const1Relative);
+                        if (instr.const0Relative || instr.const1Relative) throw std::runtime_error("Unsupported relative constant");
                         regFormatted = constantName;
                     }
                 }
                 else
                 {
-                    assert(!instr.const0Relative && !instr.const1Relative);
+                    if (instr.const0Relative || instr.const1Relative) throw std::runtime_error("Unsupported relative constant");
                     regFormatted = fmt::format("c{}", reg);
                 }
             }
@@ -792,7 +792,7 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             default:
             {
                 auto findResult = interpolators.find(instr.vectorDest);
-                assert(findResult != interpolators.end());
+                if (findResult == interpolators.end()) throw std::runtime_error("Missing interpolator metadata");
                 exportRegister = findResult->second;
                 break;
             }
@@ -1904,7 +1904,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
             if (!foundUsage) {
                 fmt::println("Missing mapping for vertex element usage: {} {}", USAGE_VARIABLES[uint32_t(vertexElement.usage)], uint32_t(vertexElement.usageIndex));
-                exit(1);
+                throw std::runtime_error("Unsupported vertex semantic");
             }
 
             vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);

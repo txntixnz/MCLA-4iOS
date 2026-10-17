@@ -1,6 +1,9 @@
 #include "MCLADiagnostics.h"
 #include "MCLANativeTitleBridge.h"
 #include "MCLANativeRenderer.h"
+#if MCLA_DIRECT_METAL
+#include "MCLAAutomaticShaders.h"
+#endif
 
 #include "shader_identity.h"
 
@@ -353,7 +356,7 @@ void CaptureDrawState(const uint8_t* base, TitleCommand& command, bool forceCapt
     // Runtime draw submission needs the shader identities, not a duplicate
     // diagnostic snapshot/fingerprint of every fetch and declaration. Keep
     // the full corpus collector available only for explicit oracle runs.
-    if (!mcla::DiagnosticsEnabled() || (!ShaderCaptureEnabled() && !forceCapture)) return;
+    if ((!mcla::DiagnosticsEnabled() && !forceCapture) || (!ShaderCaptureEnabled() && !forceCapture)) return;
     ReadShaderMetadata(base, vs, ps, command);
 
     // Preserve a stable identity for the complete MCLA fetch shadow. A later
@@ -615,7 +618,7 @@ class NativeTitleBridge {
     }
 
     void AttachCapture(const uint8_t* base, TitleCommand& command, bool missingOnly=false) {
-        if (!mcla::DiagnosticsEnabled() || (!ShaderCaptureEnabled() && !missingOnly)) return;
+        if ((!mcla::DiagnosticsEnabled() && !missingOnly) || (!ShaderCaptureEnabled() && !missingOnly)) return;
         if (!base || (!command.vertexShaderIdentity &&
                       !command.pixelShaderIdentity)) {
             return;
@@ -631,7 +634,7 @@ class NativeTitleBridge {
             // Normal play captures only rejected shader combinations, at most
             // 64 per session. Existing full-oracle capture remains opt-in.
             if (missingOnly && captureKeys_.size()>=64) return;
-            if (captureRoot_.empty() || !captureKeys_.insert(key).second) {
+            if (!captureKeys_.insert(key).second) {
                 return;
             }
         }
@@ -708,6 +711,24 @@ class NativeTitleBridge {
             std::memcpy(payload->patchedStreamStrides.data(), source,
                         payload->patchedStreamStrides.size());
         }
+#if MCLA_DIRECT_METAL
+        if (missingOnly && mcla::shader::Enabled()) {
+            const auto words=[](const std::vector<uint8_t>& bytes) {
+                std::vector<uint32_t> out(bytes.size()/4);
+                if(!bytes.empty())std::memcpy(out.data(),bytes.data(),out.size()*4);
+                return out;
+            };
+            if(command.vertexShaderDescriptor && command.vertexElementTableAddress &&
+               payload->vertexElements.size()==size_t(command.vertexElementCount)*4 &&
+               payload->vertexInterpolators.size()==size_t(command.vertexInterpolatorCount)*4)
+                mcla::shader::Request({command.vertexShaderIdentity,true,payload->vertexShader,
+                    words(payload->vertexElements),words(payload->vertexInterpolators),0});
+            if(command.pixelShaderDescriptor && command.pixelInterpolatorTableAddress &&
+               payload->pixelInterpolators.size()==size_t(command.pixelInterpolatorCount)*4)
+                mcla::shader::Request({command.pixelShaderIdentity,false,payload->pixelShader,
+                    {},words(payload->pixelInterpolators),command.pixelOutputs});
+        }
+#endif
         command.automaticCapture = missingOnly;
         command.capture = std::move(payload);
     }

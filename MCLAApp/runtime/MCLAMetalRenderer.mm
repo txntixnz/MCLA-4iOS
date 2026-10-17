@@ -32,6 +32,7 @@
 #include "MCLABootstrapSubsystems.h"
 #include "MCLAMetalHelpers.h"
 #include "MCLAMetalLibrary.h"
+#include "MCLAAutomaticShaders.h"
 #include "MCLANativeRenderer.h"
 #include "MCLAQuadVertexFetch.h"
 #include "MCLARuntimeBootstrap.h"
@@ -373,6 +374,8 @@ struct Flight {
   size_t block = 0, offset = 0;
 };
 struct Shader {
+  bool vertex=false;
+  int32_t bundledIndex=-1;
   const MCLAMetalShaderInfo *info = nullptr;
   id<MTLLibrary> library = nil;
   std::map<uint32_t, id<MTLFunction>> functions;
@@ -662,6 +665,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   uint64_t gpuRecoveries_ = 0;
   static constexpr size_t kShaderWords = (std::size(kMCLAMetalShaders)+63)/64;
   std::array<uint64_t,kShaderWords> frameShaderBits_{};
+  std::vector<std::pair<bool,uint64_t>> frameAutomaticShaders_;
   std::array<std::array<uint64_t,2>,8> encoderPairs_{};
   std::array<uint64_t,2> encoderLastPair_{};
   unsigned encoderPairCount_ = 0, encoderDraws_ = 0;
@@ -813,6 +817,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       dispatch_semaphore_signal(f.available); return false;
     }
     frameShaderBits_={};
+    frameAutomaticShaders_.clear();
     f.block = 0;
     f.offset = 0;
     dynamicVertexUploads_.clear();
@@ -1168,15 +1173,20 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (found == shaderHandles_.end())
       return nullptr;
     auto &s = shaders_[found->second];
+    if(s.bundledIndex<0 && mcla::shader::Suspended(found->second,s.vertex))return nullptr;
     if (s.info && s.library)
       return &s;
     for (auto &i : kMCLAMetalShaders)
-      if (i.hash == found->second) {
+      if (i.hash == found->second && i.vertex==s.vertex) {
+        s.bundledIndex=int32_t(&i-kMCLAMetalShaders);
         s.info = &i;
         break;
       }
-    if (!s.info)
-      return nullptr;
+    if (!s.info) {
+      s.info=mcla::shader::ReadyInfo(found->second,s.vertex);
+      s.library=mcla::shader::ReadyLibrary(found->second,s.vertex);
+      return s.info && s.library?&s:nullptr;
+    }
     NSString *name =
         [NSString stringWithFormat:@"%s-%016llX", s.info->vertex ? "vs" : "ps",
                                    (unsigned long long)s.info->hash];
@@ -2870,10 +2880,16 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           [encoder_ drawPrimitives:type vertexStart:start+slice.first vertexCount:slice.count];
     }
     ++draws_;
+    for(const auto* shader : {vs,ps}) if(shader && shader->bundledIndex<0) {
+      const std::pair<bool,uint64_t> key{shader->vertex,shader->info->hash};
+      if(frameAutomaticShaders_.size()<128 && std::find(frameAutomaticShaders_.begin(),frameAutomaticShaders_.end(),key)==frameAutomaticShaders_.end())frameAutomaticShaders_.push_back(key);
+    }
     if (mcla::DiagnosticsEnabled()) {
-      for(const auto* info : {vs->info, ps ? ps->info : nullptr}) if(info) {
-        const size_t index=size_t(info-kMCLAMetalShaders);
-        if(index<std::size(kMCLAMetalShaders))frameShaderBits_[index/64]|=uint64_t(1)<<(index%64);
+      for(const auto* shader : {vs,ps}) if(shader) {
+        if(shader->bundledIndex>=0) {
+          const size_t index=size_t(shader->bundledIndex);
+          frameShaderBits_[index/64]|=uint64_t(1)<<(index%64);
+        }
       }
       ++encoderDraws_;
       encoderLastPair_={vs->info->hash,ps?ps->info->hash:0};
@@ -3643,9 +3659,11 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto commitTime = std::make_shared<double>(0);
     auto passTrace=gpuPassTrace_;
     const auto shaderBits=frameShaderBits_;
+    const auto automaticShaders=frameAutomaticShaders_;
     [commands_ addCompletedHandler:^(id<MTLCommandBuffer> cb) {
       self->completed_.fetch_add(1);
       if (cb.status == MTLCommandBufferStatusError) {
+        for(auto [vertex,hash]:automaticShaders)mcla::shader::SuspendAfterGPUError(hash,vertex);
         const bool revoked=[cb.error.domain isEqualToString:MTLCommandBufferErrorDomain] &&
             cb.error.code==MTLCommandBufferErrorBlacklisted;
         self->gpuRecovery_.Error(revoked);
@@ -3987,6 +4005,7 @@ public:
       case ng::CommandType::kRegisterShader: {
         CMD(RegisterShaderCommand);
         shaderHandles_[c.shader] = c.hash;
+        shaders_[c.hash].vertex=c.stage==ng::ShaderStage::kVertex;
         return true;
       }
       case ng::CommandType::kRegisterVertexDeclaration: {

@@ -437,6 +437,26 @@ if(MCLA_RUNTIME_ENABLED AND NOT MCLA_DIRECT_METAL)
 endif()
 
 if(MCLA_RUNTIME_ENABLED AND MCLA_DIRECT_METAL)
+    set(MCLA_SHADER_ASSETS "${CMAKE_CURRENT_BINARY_DIR}/mcla-runtime-shaders")
+    file(MAKE_DIRECTORY "${MCLA_SHADER_ASSETS}")
+    execute_process(COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_mcla_runtime_shader_assets.py"
+        "${MCLA_SHADER_ASSETS}/MCLARuntimeShaderAssets.h"
+        RESULT_VARIABLE MCLA_SHADER_ASSETS_RESULT)
+    if(NOT MCLA_SHADER_ASSETS_RESULT EQUAL 0)
+        message(FATAL_ERROR "Cannot embed audited runtime shader helpers")
+    endif()
+    add_library(MCLARuntimeShaderTranslator STATIC runtime/MCLARuntimeShaderSource.cpp
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/mcla-xenosrecomp/shader_recompiler.cpp")
+    target_include_directories(MCLARuntimeShaderTranslator PRIVATE
+        "${MCLA_SHADER_ASSETS}" "${MCLA_GENERATED_DIR}" "${MCLA_LARECOMP_NATIVE_ROOT}"
+        "${MCLA_REXGLUE_SDK_DIR}/thirdparty/fmt/include")
+    target_compile_definitions(MCLARuntimeShaderTranslator PRIVATE GTA4_RECOMP FMT_HEADER_ONLY)
+    target_compile_options(MCLARuntimeShaderTranslator PRIVATE -fms-extensions -Wno-switch
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/../tools/mcla-xenosrecomp/pch.h")
+    target_sources(MCLAApp PRIVATE runtime/MCLAAutomaticShaders.mm)
+    target_include_directories(MCLAApp PRIVATE "${MCLA_SHADER_ASSETS}")
+    target_link_libraries(MCLAApp PRIVATE MCLARuntimeShaderTranslator)
     target_sources(MCLAApp PRIVATE runtime/MCLANativeRenderer.cpp
         runtime/MCLAMetalRenderer.mm runtime/MCLANativeSettings.cpp)
     target_include_directories(MCLAApp PRIVATE runtime/native_cache
