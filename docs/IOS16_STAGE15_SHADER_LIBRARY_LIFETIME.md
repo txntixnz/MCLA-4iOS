@@ -30,5 +30,12 @@ Validation so far:
   limit, verifies every payload, and leaves the descriptor count unchanged.
 - Empty, missing, directory and oversized inputs clean up correctly. Forced
   EMFILE is recoverable after releasing one descriptor.
-- Apple-host Objective-C++ coverage and the next private full runtime build
-  are pending. Real device playback past the previous crash needs a new test.
+- Apple-host tests pass for the actual Objective-C++ loader with retained
+  dispatch data, descriptor closure before Metal, intact bytes after input
+  destruction, and recovery from a failed library creation.
+- Public validation run `38988119407` passes. Full native ARM64/iOS 16 build,
+  signing and packaging pass in private run `38988177873`, source
+  `beaa57a8c1c04a48fd430da4219e92959e996718`.
+- The downloaded IPA independently passes target, signature structure, all
+  604 unchanged shader hashes and all 13 strong native hook checks.
+- Real device playback past the previous crash needs a new test.
