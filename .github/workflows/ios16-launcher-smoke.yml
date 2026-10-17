@@ -18,6 +18,9 @@ on:
       - 'tools/test_ios16_aot_graphics.py'
       - 'MCLAApp/runtime/MCLAShaderLibraryBytes.h'
       - 'MCLAApp/runtime/MCLAMetalLibrary.h'
+      - 'MCLAApp/runtime/MCLAMetalRenderer.mm'
+      - 'MCLAApp/runtime/MCLAVisualExperiments.h'
+      - 'tools/test_mcla_visual_experiments.cpp'
       - 'tools/test_mcla_metal_library.mm'
       - '.github/workflows/ios16-launcher-smoke.yml'
 jobs:
@@ -37,6 +40,12 @@ jobs:
           xcrun clang++ -std=c++23 -fobjc-arc -fblocks tools/test_mcla_metal_library.mm \
             -framework Foundation -framework Metal -o /tmp/mcla-library-test
           /tmp/mcla-library-test
+      - name: Check full-screen overlays and authored HUD placement
+        run: |
+          for name in visual_experiments control_overhaul metal_presentation; do
+            xcrun clang++ -std=c++20 -O2 -fsanitize=undefined "tools/test_mcla_${name}.cpp" -o "/tmp/mcla-${name}"
+            "/tmp/mcla-${name}"
+          done
       - name: Configure native iOS 16 ARM64 launcher
         run: |
           cmake --preset ios16-launcher-only -S MCLAApp \

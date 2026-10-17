@@ -2026,21 +2026,25 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   std::array<uint64_t,128> colorAuditKeys_{};
   unsigned colorAuditCount_=0;
   std::vector<std::array<float,2>> hudPointScratch_;
+  std::vector<mcla::metal::HudClip> hudClipScratch_;
+  unsigned overlayAuditCount_=0;
   bool InspectHUDDraw(const uint8_t* state,
-      const ng::RegisterVertexDeclarationCommand& decl, uint32_t primitive,
+      const ng::RegisterVertexDeclarationCommand& decl,
       uint32_t start, uint32_t count, bool indexed, int32_t baseVertex,
       uint32_t inlineAddress, uint32_t inlineStride,
-      mcla::metal::HudBounds* bounds = nullptr, uint32_t availableCount = 0,
-      std::span<std::array<float,2>> projected = {}) {
-    if (count < 3 || count > (bounds ? 4096u : 6u)) return false;
-    if (!projected.empty() && (!bounds || projected.size()!=count)) return false;
+      mcla::metal::HudBounds& bounds,
+      std::span<std::array<float,2>> projected,
+      std::span<mcla::metal::HudClip> clips) {
+    if (count<3 || count>4096 || projected.size()!=count || clips.size()!=count) return false;
     const ng::VertexElement* position = nullptr;
     for (unsigned i=0;i<decl.element_count;++i)
       if (decl.elements[i].usage == 0 && decl.elements[i].usage_index == 0)
         position = &decl.elements[i];
-    if (!position || position->type != 0x2A23B9 || position->stream >= 17) return false;
+    if (!position || position->stream>=17) return false;
+    const unsigned positionBytes=mcla::metal::HudPositionBytes(position->type);
+    if (!positionBytes) return false;
     const auto bind = streams_[position->stream];
-    const uint32_t sourceCount=availableCount ? availableCount : count;
+    const uint32_t sourceCount=count;
     if (inlineAddress && uint64_t(sourceCount)*inlineStride > 64u*1024u*1024u) return false;
     uint32_t address=inlineAddress, size=inlineAddress ? sourceCount*inlineStride : 0;
     const uint32_t stride=inlineAddress ? inlineStride : bind.stride;
@@ -2051,17 +2055,21 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       if (!metadata || !metadata->HasValidPayload(64*1024*1024)) return false;
       address=metadata->guest_address; size=metadata->guest_size;
     }
-    if (!stride) return false;
+    if (!stride || uint64_t(position->offset)+positionBytes>stride) return false;
     auto source=P(address,size); if (!source) return false;
     const uint8_t* indices=nullptr; unsigned indexBytes=0;
     if (indexed) {
       auto header=P(index_,32); if (!header) return false;
       auto metadata=ng::DecodeNativeBufferMetadata(R(header),R(header,24),R(header,28));
       indexBytes=(R(header)&0x80000000u)?4:2;
-      if (!metadata || (uint64_t(start)+count)*indexBytes > metadata->guest_size) return false;
+      if (!metadata || !metadata->HasValidPayload(64*1024*1024) ||
+          (uint64_t(start)+count)*indexBytes > metadata->guest_size) return false;
       indices=P(metadata->guest_address,metadata->guest_size); if (!indices) return false;
     }
-    std::array<std::array<float,4>,6> clips{};
+    mcla::metal::HudMatrix matrix{};
+    for(unsigned row=0;row<4;++row)
+      for(unsigned component=0;component<4;++component)
+        matrix[row][component]=F(state,1920+(8+row)*16+component*4);
     mcla::metal::HudBounds box{INFINITY, INFINITY, -INFINITY, -INFINITY};
     for (unsigned i=0;i<count;++i) {
       int64_t vertex=start+i;
@@ -2071,26 +2079,19 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       }
       if (vertex < 0) return false;
       const uint64_t at=uint64_t(offset)+position->offset+uint64_t(vertex)*stride;
-      if (at+12 > size) return false;
-      const float xyz[]={F(source,unsigned(at)),F(source,unsigned(at)+4),F(source,unsigned(at)+8)};
-      // This shader's audited fetch/ALU sequence is p.x*c8+p.y*c9+p.z*c10+c11.
-      std::array<float,4> clip{};
-      for (unsigned component=0;component<4;++component)
-        clip[component]=xyz[0]*F(state,1920+8*16+component*4)+
-          xyz[1]*F(state,1920+9*16+component*4)+
-          xyz[2]*F(state,1920+10*16+component*4)+F(state,1920+11*16+component*4);
-      if (bounds) {
-        if (!std::isfinite(clip[3]) || clip[3] <= 0) return false;
-        const float px = F(state,12640) + (clip[0]/clip[3]+1)*.5f*F(state,12648);
-        const float py = F(state,12644) + (1-clip[1]/clip[3])*.5f*F(state,12652);
-        if (!std::isfinite(px) || !std::isfinite(py)) return false;
-        if (!projected.empty()) projected[i]={px,py};
-        box.left=std::min(box.left,px); box.right=std::max(box.right,px);
-        box.top=std::min(box.top,py); box.bottom=std::max(box.bottom,py);
-      } else clips[i]=clip;
+      if (at+positionBytes > size) return false;
+      auto clip=mcla::metal::ProjectHudPosition({source+at,positionBytes},position->type,matrix);
+      if (!clip) return false;
+      clips[i]=*clip;
+      const float px=F(state,12640)+((*clip)[0]/(*clip)[3]+1)*.5f*F(state,12648);
+      const float py=F(state,12644)+(1-(*clip)[1]/(*clip)[3])*.5f*F(state,12652);
+      if (!std::isfinite(px) || !std::isfinite(py)) return false;
+      projected[i]={px,py};
+      box.left=std::min(box.left,px); box.right=std::max(box.right,px);
+      box.top=std::min(box.top,py); box.bottom=std::max(box.bottom,py);
     }
-    if (bounds) { *bounds=box; return true; }
-    return mcla::metal::FullScreenOverlay({clips.data(),count},primitive==8);
+    bounds=box;
+    return true;
   }
   bool Draw(uint32_t dev, uint32_t primitive, uint32_t start, uint32_t count,
             bool indexed, int32_t baseVertex, uint32_t data = 0,
@@ -2353,70 +2354,102 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     // The outline/stencil layers share the audited HUD vertex transform but
     // use different fragment/blend states. Frame and move those layers with
     // the textured fill, rather than leaving the rim at its original location.
-    const bool safeFrameDraw = hudSafeFrameProbe_ &&
-        logicalTarget.width == 1280 && logicalTarget.height == 720 &&
-        (uint64_t(aw)*720 != uint64_t(ah)*1280) &&
-        vs->info->hash == 0xF8B6972A1D56B354ULL;
-    const bool fullScreenOverlay = safeFrameDraw &&
+    const bool authoredHUD=logicalTarget.width==1280 && logicalTarget.height==720 &&
+        vs->info->hash==0xF8B6972A1D56B354ULL;
+    const bool safeFrameDraw=authoredHUD && hudSafeFrameProbe_ &&
+        uint64_t(aw)*720!=uint64_t(ah)*1280;
+    const uint32_t tl=R(state,10436),br=R(state,10440);
+    // A clipped child viewport/card is never a full display overlay.
+    const bool overlayEligible=safeFrameDraw &&
         (visualExperiments_ & mcla::metal::FullScreenFades) &&
-        InspectHUDDraw(state,decl,primitive,start,count,indexed,baseVertex,data,stride);
-    auto safe = safeFrameDraw && !fullScreenOverlay
-        ? mcla::metal::HudSafeFrame(aw, ah)
-        : mcla::metal::SafeFrame{0,0,aw,ah};
-    const double viewportScaleX = double(safe.width)/logicalTarget.width;
-    const double viewportScaleY = double(safe.height)/logicalTarget.height;
+        mcla::metal::HudOverlayViewport(x,y,w,h,tl,br);
+    // Keep the previous driving-HUD experiment's Float3 eligibility. The
+    // additional input formats are for screen coverage, not new panel moves.
+    const bool raisedHUD=authoredHUD &&
+        (MCLAGraphicsVisualExperiments() & mcla::metal::RaisedDrivingHUD) &&
+        std::any_of(decl.elements,decl.elements+decl.element_count,[](const auto& e){
+          return e.usage==0 && e.usage_index==0 && e.type==0x2A23B9;
+        });
+    mcla::metal::HudBounds hudBounds{};
+    bool hudProjected=false;
+    if((overlayEligible || raisedHUD) && count>=3 && count<=4096) {
+      hudPointScratch_.resize(count);
+      hudClipScratch_.resize(count);
+      hudProjected=InspectHUDDraw(state,decl,start,count,indexed,baseVertex,data,stride,
+                                 hudBounds,hudPointScratch_,hudClipScratch_);
+    }
+    auto overlayRanges=overlayEligible && hudProjected
+        ? mcla::metal::HudOverlayRanges(hudClipScratch_,primitive)
+        : std::vector<mcla::metal::HudGeometryRange>{};
+    const bool anyOverlay=std::any_of(overlayRanges.begin(),overlayRanges.end(),
+        [](const auto& range){return range.fullScreen;});
+    const bool fullScreenOverlay=anyOverlay &&
+        std::all_of(overlayRanges.begin(),overlayRanges.end(),
+            [](const auto& range){return range.fullScreen;});
+    auto safe=safeFrameDraw && !fullScreenOverlay
+        ? mcla::metal::HudSafeFrame(aw,ah) : mcla::metal::SafeFrame{0,0,aw,ah};
+    const double viewportScaleX=double(safe.width)/logicalTarget.width;
+    const double viewportScaleY=double(safe.height)/logicalTarget.height;
     if (frames_ == hudTraceFrame_)
       REXLOG_INFO("MCLA HUD TRACE draw={} vs={:016X} ps={:016X} target={}x{} logical={}x{} depth={} depth_enable={} blend={} safe={} primitive={} count={} indexed={} viewport={:.1f},{:.1f},{:.1f},{:.1f} scissor={:08X},{:08X}",
                   draws_, vs->info->hash, ps ? ps->info->hash : 0,
                   aw, ah, logicalTarget.width, logicalTarget.height,
                   hasDepthAttachment, R(state,11868), R(state,11844) >> 31,
-                  safeFrameDraw,
-                  primitive, count, indexed, x, y, w, h,
-                  R(state,10436), R(state,10440));
-    mcla::metal::HudMove hudMove{};
-    bool hudProjected=false;
-    if ((MCLAGraphicsVisualExperiments() & mcla::metal::RaisedDrivingHUD) &&
-        logicalTarget.width == 1280 && logicalTarget.height == 720 &&
-        vs->info->hash == 0xF8B6972A1D56B354ULL && !fullScreenOverlay) {
-      mcla::metal::HudBounds bounds{};
-      if (count>=3 && count<=4096) hudPointScratch_.resize(count);
-      if (InspectHUDDraw(state,decl,primitive,start,count,indexed,
-                               baseVertex,data,stride,&bounds,0,
-                               count>=3 && count<=4096 ? std::span(hudPointScratch_) : std::span<std::array<float,2>>{})) {
-        hudProjected=true;
-        hudMove=mcla::metal::RaisedHudMove(bounds);
-      }
-      if (frames_ == hudTraceFrame_)
-        REXLOG_INFO("MCLA HUD MOVE draw={} group={} bounds={:.1f},{:.1f},{:.1f},{:.1f} scale={} dx={} dy={}",
-            draws_,hudMove.name,bounds.left,bounds.top,bounds.right,bounds.bottom,hudMove.scale,hudMove.x,hudMove.y);
+                  safeFrameDraw, primitive, count, indexed, x, y, w, h,tl,br);
+    if(mcla::DiagnosticsEnabled() && overlayEligible && overlayAuditCount_<12 &&
+       (anyOverlay || (hudProjected && hudBounds.left<=1 && hudBounds.top<=1 &&
+                       hudBounds.right>=1279 && hudBounds.bottom>=719))) {
+      ++overlayAuditCount_;
+      uint32_t positionType=0;
+      for(unsigned i=0;i<decl.element_count;++i)
+        if(decl.elements[i].usage==0 && decl.elements[i].usage_index==0)
+          positionType=decl.elements[i].type;
+      REXLOG_INFO("MCLA OVERLAY frame={} draw={} position={:08X} primitive={} count={} indexed={} full={} mixed={} target={}x{}",
+          frames_,draws_,positionType,primitive,count,indexed,fullScreenOverlay,
+          anyOverlay && !fullScreenOverlay,aw,ah);
     }
-    // UI rims can be batched with other HUD elements. Classify independent
-    // triangles/quads when the complete batch spans multiple regions, keeping
-    // unrelated primitives in place and preserving their original draw order.
-    std::vector<mcla::metal::HudMove> hudSlices;
+    mcla::metal::HudMove hudMove{};
+    if(raisedHUD && hudProjected && !anyOverlay)
+      hudMove=mcla::metal::RaisedHudMove(hudBounds);
+    if(raisedHUD && frames_==hudTraceFrame_)
+      REXLOG_INFO("MCLA HUD MOVE draw={} group={} bounds={:.1f},{:.1f},{:.1f},{:.1f} scale={} dx={} dy={}",
+          draws_,hudMove.name,hudBounds.left,hudBounds.top,hudBounds.right,hudBounds.bottom,
+          hudMove.scale,hudMove.x,hudMove.y);
+    struct HudSlice {
+      uint32_t first,count;
+      bool fullScreen;
+      mcla::metal::HudMove move;
+    };
+    std::vector<HudSlice> hudSlices;
     const uint32_t hudStep=primitive==13 ? 4 : primitive==4 ? 3 : 0;
-    if ((MCLAGraphicsVisualExperiments() & mcla::metal::RaisedDrivingHUD) &&
-        logicalTarget.width==1280 && logicalTarget.height==720 &&
-        vs->info->hash==0xF8B6972A1D56B354ULL && !fullScreenOverlay &&
-        hudMove.x==0 && hudMove.y==0 && hudStep && count<=4096 && count%hudStep==0) {
+    const bool mixedOverlay=anyOverlay && !fullScreenOverlay;
+    if(hudProjected && !fullScreenOverlay &&
+       (mixedOverlay || (raisedHUD && hudMove.x==0 && hudMove.y==0 &&
+                         hudStep && count%hudStep==0))) {
+      if(overlayRanges.empty())
+        for(uint32_t first=0;first<count;first+=hudStep)
+          overlayRanges.push_back({first,hudStep,false});
       bool anyMoved=false;
-      for(uint32_t first=0;first<count;first+=hudStep) {
-        mcla::metal::HudBounds bounds{};
-        mcla::metal::HudMove move{};
-        bool valid=false;
-        if(hudProjected) {
-          auto cached=mcla::metal::HudPointBounds(std::span<const std::array<float,2>>(hudPointScratch_).subspan(first,hudStep));
-          if(cached) {bounds=*cached;valid=true;}
-        } else {
-          valid=InspectHUDDraw(state,decl,primitive,start+first,hudStep,indexed,
-                          baseVertex,data,stride,&bounds,count);
+      for(const auto& range:overlayRanges) {
+        if(range.fullScreen) {
+          hudSlices.push_back({range.first,range.count,true,{}});
+          continue;
         }
-        if(valid)
-          move=mcla::metal::RaisedHudMove(bounds);
-        anyMoved |= move.x!=0 || move.y!=0;
-        hudSlices.push_back(move);
+        // Non-overlay ranges stay in the authored frame. Preserve the existing
+        // independent triangle/quad policy for the driving-HUD experiment.
+        const uint32_t step=raisedHUD && hudStep ? hudStep : range.count;
+        for(uint32_t first=range.first;first<range.first+range.count;first+=step) {
+          mcla::metal::HudMove move{};
+          if(raisedHUD && hudStep) {
+            auto bounds=mcla::metal::HudPointBounds(
+                std::span<const std::array<float,2>>(hudPointScratch_).subspan(first,step));
+            if(bounds) move=mcla::metal::RaisedHudMove(*bounds);
+          }
+          anyMoved|=move.x!=0 || move.y!=0;
+          hudSlices.push_back({first,step,false,move});
+        }
       }
-      if(!anyMoved) hudSlices.clear();
+      if(!mixedOverlay && !anyMoved) hudSlices.clear();
     }
     safe=mcla::metal::AnchoredHudFrame(safe,aw,hudMove);
     const double hudOffsetX=hudMove.x*viewportScaleX+safe.left*(1-hudMove.scale);
@@ -2430,7 +2463,6 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (UpdateDynamic(viewport_, viewport))
       [encoder_ setViewport:MTLViewport{viewport[0],viewport[1],viewport[2],
                                        viewport[3],viewport[4],viewport[5]}];
-    uint32_t tl = R(state, 10436), br = R(state, 10440);
     unsigned sx = safe.left + mcla::metal::ScaleEdge(tl & 32767, logicalTarget.width, safe.width),
              sy = safe.top + mcla::metal::ScaleEdge((tl >> 16) & 32767, logicalTarget.height, safe.height),
              ex = safe.left + mcla::metal::ScaleEdge(br & 32767, logicalTarget.width, safe.width),
@@ -2450,8 +2482,12 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         F(state,10464),F(state,10468),F(state,10472),F(state,10476)};
     if (UpdateDynamic(blendColor_, blend))
       [encoder_ setBlendColorRed:blend[0] green:blend[1] blue:blend[2] alpha:blend[3]];
-    auto applyHudSlice=[&](const mcla::metal::HudMove& move) {
-      const auto frame=mcla::metal::AnchoredHudFrame(safe,aw,move);
+    auto applyHudSlice=[&](const HudSlice& slice) {
+      const auto& move=slice.move;
+      const auto frame=mcla::metal::AnchoredHudFrame(
+          slice.fullScreen ? mcla::metal::SafeFrame{0,0,aw,ah} : safe,aw,move);
+      const double viewportScaleX=double(frame.width)/logicalTarget.width;
+      const double viewportScaleY=double(frame.height)/logicalTarget.height;
       const std::array<double,6> vp{
           frame.left+(x*move.scale+move.x)*viewportScaleX,
           frame.top+(y*move.scale+move.y)*viewportScaleY,
@@ -2643,19 +2679,20 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         [encoder_ drawIndexedPrimitives:type indexCount:indexCount indexType:MTLIndexTypeUInt32
             indexBuffer:u.buffer indexBufferOffset:u.offset instanceCount:1 baseVertex:baseVertex baseInstance:0];
       } else {
-        const uint32_t sliceCount=primitive==13 ? 6 : 3;
-        for(size_t i=0;i<hudSlices.size();++i)
-          if(applyHudSlice(hudSlices[i]))
-            [encoder_ drawIndexedPrimitives:type indexCount:sliceCount indexType:MTLIndexTypeUInt32
-                indexBuffer:u.buffer indexBufferOffset:u.offset+i*sliceCount*sizeof(uint32_t)
+        for(const auto& slice:hudSlices) {
+          const auto range=mcla::metal::HudExpandedIndexRange(primitive,slice.first,slice.count);
+          if(applyHudSlice(slice))
+            [encoder_ drawIndexedPrimitives:type indexCount:range[1] indexType:MTLIndexTypeUInt32
+                indexBuffer:u.buffer indexBufferOffset:u.offset+size_t(range[0])*sizeof(uint32_t)
                 instanceCount:1 baseVertex:baseVertex baseInstance:0];
+        }
       }
     } else if(hudSlices.empty()) {
       [encoder_ drawPrimitives:type vertexStart:start vertexCount:count];
     } else {
-      for(size_t i=0;i<hudSlices.size();++i)
-        if(applyHudSlice(hudSlices[i]))
-          [encoder_ drawPrimitives:type vertexStart:start+i*hudStep vertexCount:hudStep];
+      for(const auto& slice:hudSlices)
+        if(applyHudSlice(slice))
+          [encoder_ drawPrimitives:type vertexStart:start+slice.first vertexCount:slice.count];
     }
     ++draws_;
     if(gpuPassTrace_)gpuPassTrace_->Draw(vs->info->hash,ps?ps->info->hash:0);

@@ -38,4 +38,7 @@ Validation so far:
   `beaa57a8c1c04a48fd430da4219e92959e996718`.
 - The downloaded IPA independently passes target, signature structure, all
   604 unchanged shader hashes and all 13 strong native hook checks.
-- Real device playback past the previous crash needs a new test.
+- Stage 15 device test passed: the user reports smooth playback without a crash.
+  The supplied iPhone/iOS 16 clip continues through starter-car selection,
+  subsequent cutscenes and into driving. Full-screen overlay coverage is the
+  next reported visual issue; see `IOS16_STAGE16_OVERLAY_COVERAGE.md`.
