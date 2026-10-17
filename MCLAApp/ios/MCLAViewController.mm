@@ -651,7 +651,6 @@ static void MCLARegisterGraphicsDefaults(void) {
 - (void)done:(id)sender { [self dismissViewControllerAnimated:YES completion:nil]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView { return 5; }
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {
-    if (section == 4) return 1;
     if (section == 2) return 2;
     if (section == 0 || section == 4) return 2;
     if (section == 1) {
