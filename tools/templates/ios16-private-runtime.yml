@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: txntixnz/MCLA-4iOS
-          ref: 816f9bd4f6d4014241266f82ead8fe22e665e5c3
+          ref: 505cb759fc514a3b4e99170a56d4f4b580ea7097
           path: source
           submodules: false
       - name: Test graphics hook linker bindings
@@ -35,7 +35,7 @@ jobs:
       - name: Check full-screen overlays and authored HUD placement
         working-directory: source
         run: |
-          for name in visual_experiments control_overhaul metal_presentation; do
+          for name in controller_input visual_experiments control_overhaul metal_presentation; do
             xcrun clang++ -std=c++20 -O2 -fsanitize=undefined "tools/test_mcla_${name}.cpp" -o "/tmp/mcla-${name}"
             "/tmp/mcla-${name}"
           done
@@ -127,8 +127,8 @@ jobs:
           lipo "$APP/MCLAApp" -verify_arch arm64
           xcrun vtool -show-build "$APP/MCLAApp" | tee out/application-target.txt
           /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName MCLA iOS16 Native Test' "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 16' "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :MCLABringupProfile string ios16-native-stage16' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 17' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :MCLABringupProfile string ios16-native-stage17' "$APP/Info.plist"
           mkdir -p "$APP/OpenSourceNotices"
           cp -R source/licenses "$APP/OpenSourceNotices/"
           cp source/LICENSE source/CREDITS.md source/THIRD_PARTY_NOTICES.md "$APP/OpenSourceNotices/"
@@ -150,17 +150,17 @@ jobs:
           codesign --verify --strict "$APP"
           mkdir -p package/Payload
           ditto "$APP" package/Payload/MCLAApp.app
-          (cd package && zip -qry ../out/MCLA_iOS16_STAGE16_WIDE_OVERLAYS.ipa Payload)
-          unzip -t out/MCLA_iOS16_STAGE16_WIDE_OVERLAYS.ipa | tail -1
-          python3 source/tools/ios16_verify_runtime_ipa.py out/MCLA_iOS16_STAGE16_WIDE_OVERLAYS.ipa \
+          (cd package && zip -qry ../out/MCLA_iOS16_STAGE17_CONTROLLER_SUPPORT.ipa Payload)
+          unzip -t out/MCLA_iOS16_STAGE17_CONTROLLER_SUPPORT.ipa | tail -1
+          python3 source/tools/ios16_verify_runtime_ipa.py out/MCLA_iOS16_STAGE17_CONTROLLER_SUPPORT.ipa \
             --shader-evidence private-shaders/private-shader-rebuild/compatibility-report.json \
             --json out/runtime_ipa_audit.json
-          shasum -a 256 out/MCLA_iOS16_STAGE16_WIDE_OVERLAYS.ipa > out/ipa-sha256.txt
-          printf '%s\n' 'STAGE 16: wider full-screen overlay input/topology coverage and ordered mixed UI slices. Stage 15 intro crash fix retained. Device transition retest pending.' > out/STATUS.txt
+          shasum -a 256 out/MCLA_iOS16_STAGE17_CONTROLLER_SUPPORT.ipa > out/ipa-sha256.txt
+          printf '%s\n' 'STAGE 17: native controller analog packet repair, automatic touch hide/restore, and styled Xbox touch layout. Stage 15/16 renderer repairs retained. Physical controller device test pending.' > out/STATUS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: MCLA-Private-iOS16-Stage16-Wide-Overlays
+          name: MCLA-Private-iOS16-Stage17-Controller-Support
           path: out
           compression-level: 9
           retention-days: 7
