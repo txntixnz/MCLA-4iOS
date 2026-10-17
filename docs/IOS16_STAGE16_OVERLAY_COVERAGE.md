@@ -43,8 +43,12 @@ screen projection, input bounds/invalid values, triangle topology and overscan,
 crossed/disconnected/partial rejection, mixed-batch ordering, the 4,096-input
 limit, expanded index ranges, child scissor rejection, native phone scene extent,
 and existing HUD movement and presentation tests. Linux AddressSanitizer and
-UBSan pass (leak detection is unavailable in the executor). Apple-host checks
-and the full ARM64/iOS 16 application build are required before delivery.
+UBSan pass (leak detection is unavailable in the executor). Apple-host overlay/HUD/presentation checks also pass in public run
+`38991876204` and private run `38991899077`. The full ARM64/iOS 16 application
+build, codesign verification and packaging pass. The downloaded IPA independently
+passes target/entitlement, 604 shader-hash and 13 strong native-hook audits.
+Build 16 retains the Stage 15 owned-data loader and uses the same preview bundle
+identity. Its Mach-O UUID is `9316c286-2388-3c34-b10e-4dfca0b7733d`.
 
 This is a renderer coverage repair, not a device-verified claim that every fade
 path is fixed. Replay the intro/loading transitions on the phone and confirm
