@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exercise the actual streaming ZIP exporter with synthetic app storage."""
-import pathlib, subprocess, tempfile, zipfile
+import json, pathlib, subprocess, tempfile, zipfile
 root = pathlib.Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
     tmp = pathlib.Path(tmp)
@@ -20,6 +20,10 @@ with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
         'Documents/Diagnostics/nested/測試.csv': b'frame,ms\n' * 20000,
         'Documents/Diagnostics/empty.txt': b'',
         'Library/Application Support/MCLA/native-capture/manifest.jsonl': b'{"test":true}\n',
+        'Library/Application Support/MCLA/native-capture/shaders/vs-0123456789ABCDEF.bin': bytes(range(256)),
+        'Library/Application Support/MCLA/native-capture/metadata/vs-elements-0123456789ABCDEF.bin': b'\x01\x00\x00\x00',
+        'Library/Application Support/MCLA/native-capture/fetch/fetch-0123456789ABCDEF.bin': b'fetch data',
+        'Library/Application Support/MCLA/native-capture/declarations/decl-0123456789ABCDEF.bin': b'declaration',
         'Documents/mcla-render-probe.json': b'{}'}
     for name, data in expected.items():
         path = home/name
@@ -32,6 +36,13 @@ with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
         path = home/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'EXCLUDE')
+    for name, data in [
+        ('shaders/vs-FEDCBA9876543210.bin', bytes(65537)),
+        ('shaders/not-a-shader.bin', b'EXCLUDE'),
+        ('shaders/nested/vs-0123456789ABCDEF.bin', b'EXCLUDE'),
+        ('geometry/vs-0123456789ABCDEF.bin', b'EXCLUDE'),
+        ('shaders/vs-0123456789ABCDEF.bin.tmp', b'EXCLUDE')]:
+        path=support/'native-capture'/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
     outside = tmp/'outside.txt'
     outside.write_text('EXCLUDE')
     (diagnostics/'symlink.txt').symlink_to(outside)
@@ -39,7 +50,9 @@ with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
     subprocess.run([str(binary), str(home), str(archive)], check=True)
     with zipfile.ZipFile(archive) as z:
         assert z.testzip() is None
-        assert set(z.namelist()) == set(expected) | {'report.txt'}, z.namelist()
+        assert set(z.namelist()) == set(expected) | {'report.txt','shader-gap-export.json'}, z.namelist()
+        capture=json.loads(z.read('shader-gap-export.json'))
+        assert capture['included_files']==4 and capture['skipped_by_limit']==1
         for name, data in expected.items():
             assert z.read(name) == data
     empty_home = tmp/'empty'

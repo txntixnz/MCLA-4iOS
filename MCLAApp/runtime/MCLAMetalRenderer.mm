@@ -718,12 +718,17 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     for (auto& bank : constantBanks_) bank.snapshot.Reset();
     sharedConstantsSnapshot_.Reset();
     sharedConstantsUpload_ = {};
-    commands_ = [queue_ commandBuffer];
+    if (mcla::DiagnosticsEnabled()) {
+      auto descriptor = [MTLCommandBufferDescriptor new];
+      descriptor.retainedReferences = YES;
+      descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
+      commands_ = [queue_ commandBufferWithDescriptor:descriptor];
+    } else commands_ = [queue_ commandBuffer];
     if (!commands_) {
       dispatch_semaphore_signal(f.available);
       return false;
     }
-    commands_.label = @"MCLA handwritten Metal frame";
+    commands_.label = [NSString stringWithFormat:@"MCLA handwritten Metal frame %llu",(unsigned long long)(frames_+1)];
     gpuPassTrace_.reset();gpuPassTraceStatus_=0;
     if(MCLAGraphicsPerformanceCaptureActive() && frames_%30==0) {
       if(!gpuCountersSupported_)gpuPassTraceStatus_=-1;
@@ -740,13 +745,26 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   id<MTLRenderCommandEncoder> RenderEncoder(MTLRenderPassDescriptor* pass,
       const char* kind,bool guest=false) {
     if(gpuPassTrace_)gpuPassTrace_->Render(pass,kind,guest);
-    return [commands_ renderCommandEncoderWithDescriptor:pass];
+    auto encoder = [commands_ renderCommandEncoderWithDescriptor:pass];
+    if (commands_.errorOptions != MTLCommandBufferErrorOptionNone) {
+      auto texture = pass.colorAttachments[0].texture ?: pass.depthAttachment.texture;
+      encoder.label = [NSString stringWithFormat:@"%s %lux%lu initial_vs=%016llX initial_ps=%016llX",
+          kind,(unsigned long)texture.width,(unsigned long)texture.height,
+          (unsigned long long)shaderHandles_[vs_],(unsigned long long)shaderHandles_[ps_]];
+    }
+    return encoder;
   }
   id<MTLBlitCommandEncoder> BlitEncoder(const char* kind) {
-    if(!gpuPassTrace_)return [commands_ blitCommandEncoder];
-    auto pass=[MTLBlitPassDescriptor blitPassDescriptor];
-    gpuPassTrace_->Blit(pass,kind);
-    return [commands_ blitCommandEncoderWithDescriptor:pass];
+    id<MTLBlitCommandEncoder> encoder;
+    if(!gpuPassTrace_) encoder=[commands_ blitCommandEncoder];
+    else {
+      auto pass=[MTLBlitPassDescriptor blitPassDescriptor];
+      gpuPassTrace_->Blit(pass,kind);
+      encoder=[commands_ blitCommandEncoderWithDescriptor:pass];
+    }
+    if (commands_.errorOptions != MTLCommandBufferErrorOptionNone)
+      encoder.label = [NSString stringWithUTF8String:kind];
+    return encoder;
   }
   void EndEncoder() {
     if (encoder_) {
@@ -3446,24 +3464,47 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     [commands_ addCompletedHandler:^(id<MTLCommandBuffer> cb) {
       self->completed_.fetch_add(1);
       if (cb.status == MTLCommandBufferStatusError) {
-        self->gpuErrors_.fetch_add(1);
-        REXLOG_ERROR("MCLA METAL GPU error: {}",
-                     cb.error.localizedDescription.UTF8String);
+        const auto errors = self->gpuErrors_.fetch_add(1)+1;
+        REXLOG_ERROR("MCLA METAL GPU error: frame={} domain={} code={} active_at_completion={} thermal={}: {}",
+            frame,cb.error.domain.UTF8String,long(cb.error.code),
+            MCLAGraphicsApplicationActive(),int(NSProcessInfo.processInfo.thermalState),
+            cb.error.localizedDescription.UTF8String);
+        if (errors <= 8) {
+          NSArray* records = cb.error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
+          if ([records isKindOfClass:NSArray.class]) {
+            unsigned reported = 0;
+            // Report faulted encoders first, then affected/pending encoders.
+            for (unsigned priority=0;priority<2;++priority)
+              for (id<MTLCommandBufferEncoderInfo> info in records) {
+                if (reported>=16 || info.errorState==MTLCommandEncoderErrorStateCompleted ||
+                    ((info.errorState==MTLCommandEncoderErrorStateFaulted)!=(priority==0))) continue;
+                NSString* signs = [info.debugSignposts componentsJoinedByString:@" | "] ?: @"";
+                if (signs.length>512) signs=[signs substringToIndex:512];
+                REXLOG_ERROR("MCLA METAL GPU encoder frame={} state={} label={} signposts={}",
+                    frame,unsigned(info.errorState),(info.label ?: @"unlabelled").UTF8String,signs.UTF8String);
+                ++reported;
+              }
+          }
+        }
       }
       MCLAGraphicsNoteMetalCompletion(presented && cb.status == MTLCommandBufferStatusCompleted);
       if (mcla::DiagnosticsEnabled()) {
       std::lock_guard lock(self->timingMutex_);
       double now = CACurrentMediaTime();
-      if (presented)
+      if (presented && cb.status == MTLCommandBufferStatusCompleted)
         self->presentTimes_.push_back(now);
+      const bool validGPUTime = cb.status == MTLCommandBufferStatusCompleted &&
+          cb.GPUStartTime>0 && cb.GPUEndTime>=cb.GPUStartTime;
       const double gpuMilliseconds =
-          (cb.GPUEndTime - cb.GPUStartTime) * 1000;
+          validGPUTime ? (cb.GPUEndTime - cb.GPUStartTime) * 1000 : -1;
       if (performanceCaptureActive)
-        MCLAGraphicsNotePerformanceGPU(frame, cb.GPUStartTime > 0 ? gpuMilliseconds : -1,
-            cb.GPUStartTime > 0 ? (cb.GPUStartTime - *commitTime) * 1000 : -1,
-            cb.kernelStartTime > 0 ? (cb.kernelEndTime - cb.kernelStartTime) * 1000 : -1);
-      MCLAGraphicsNoteGPUTime(gpuMilliseconds);
-      self->gpuMS_.push_back(gpuMilliseconds);
+        MCLAGraphicsNotePerformanceGPU(frame, gpuMilliseconds,
+            validGPUTime ? (cb.GPUStartTime - *commitTime) * 1000 : -1,
+            validGPUTime && cb.kernelStartTime > 0 ? (cb.kernelEndTime - cb.kernelStartTime) * 1000 : -1);
+      if (validGPUTime) {
+        MCLAGraphicsNoteGPUTime(gpuMilliseconds);
+        self->gpuMS_.push_back(gpuMilliseconds);
+      }
       if (mcla::DiagnosticsEnabled() && frame % 120 == 0) {
         double seconds =
             self->presentTimes_.size() > 1

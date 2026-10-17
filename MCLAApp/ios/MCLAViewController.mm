@@ -455,6 +455,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 @property(nonatomic, copy) void (^onChange)(void);
 @property(nonatomic, copy) void (^onCalibrate)(void);
 @property(nonatomic, copy) void (^onResetLayout)(void);
+@property(nonatomic, copy) void (^onEditLayout)(void);
 @end
 
 @implementation MCLAControlsOptionsController
@@ -470,25 +471,28 @@ static void MCLARegisterGraphicsDefaults(void) {
         action:@selector(done:)];
 }
 - (void)done:(id)sender { (void)sender; [self dismissViewControllerAnimated:YES completion:nil]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView { (void)tableView; return 2; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView { (void)tableView; return 3; }
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return section == 0 ? 6 : 2;
+    (void)tableView; return section == 0 ? 6 : section == 1 ? 2 : 1;
 }
 - (NSString*)tableView:(UITableView*)tableView titleForHeaderInSection:(NSInteger)section {
-    (void)tableView; return section == 0 ? @"On-Screen Pad" : @"Steering Setup";
+    (void)tableView; return section == 0 ? @"On-Screen Pad" : section == 1 ? @"Touch Layout" : @"Steering Setup";
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     return section == 0
-        ? @"Touch controls hide automatically when a supported controller connects, and return when it disconnects. Xbox layout uses both sticks, ABXY, D-pad and shoulders. EDIT saves a separate layout. Tilt replaces left-stick steering. PAD opens the control palette."
-        : @"Recenter with the iPad in your comfortable straight-ahead driving position. Use Invert if left and right feel reversed.";
+        ? @"Touch controls hide automatically when a supported controller connects, and return when it disconnects. Xbox layout uses both sticks, ABXY, D-pad and shoulders. Tilt replaces left-stick steering."
+        : section == 1 ? @"Edit before launching or during a game. Drag to move; hold a control and pinch to resize. Tap Done to finish. Disconnect your controller before editing. In game, a three-finger tap opens Settings and Edit."
+        : @"Recenter with your device in your comfortable straight-ahead driving position. Use Invert if left and right feel reversed.";
 }
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)path {
     (void)tableView;
     UITableViewCell* cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
                                                    reuseIdentifier:nil];
-    if (path.section == 1) {
-        cell.textLabel.text = path.row == 0 ? @"Recenter tilt steering" : @"Reset touch layout";
+    if (path.section != 0) {
+        cell.textLabel.text = path.section == 2 ? @"Recenter tilt steering" : path.row == 0 ? @"Edit touch layout" : @"Reset touch layout";
+        if (path.section == 1 && path.row == 0)
+            cell.accessibilityIdentifier = @"mcla.controls.editTouchLayout";
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         return cell;
     }
@@ -515,7 +519,8 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
-    if (path.section == 1 && path.row == 0 && self.onCalibrate) self.onCalibrate();
+    if (path.section == 2 && self.onCalibrate) self.onCalibrate();
+    if (path.section == 1 && path.row == 0 && self.onEditLayout) self.onEditLayout();
     if (path.section == 1 && path.row == 1) {
         UIAlertController* confirmation = [UIAlertController
             alertControllerWithTitle:@"Reset touch layout?"
@@ -928,6 +933,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 @property(nonatomic, strong) NSMutableDictionary<NSString*, NSLayoutConstraint*>* layoutHeight;
 @property(nonatomic, strong) NSMutableDictionary<NSString*, NSArray<NSNumber*>*>* layoutDefaultSizes;
 @property(nonatomic, assign) BOOL editingTouchLayout;
+@property(nonatomic, assign) BOOL applicationInactive;
 @property(nonatomic, strong) CMMotionManager* motionManager;
 @property(nonatomic, assign) double tiltNeutral;
 @property(nonatomic, assign) BOOL tiltNeutralValid;
@@ -1011,6 +1017,7 @@ static void MCLARegisterGraphicsDefaults(void) {
                forControlEvents:UIControlEventTouchUpInside];
     self.editButton = [UIButton buttonWithType:UIButtonTypeSystem];
     [self.editButton setTitle:@"EDIT" forState:UIControlStateNormal];
+    self.editButton.accessibilityIdentifier = @"mcla.touchLayoutEditor.toggle";
     [self.editButton addTarget:self action:@selector(toggleTouchLayoutEditing:)
               forControlEvents:UIControlEventTouchUpInside];
     UIButton* performanceButton = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -1056,7 +1063,9 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self.view addSubview:self.performanceGraph];
     self.layoutHint = [[UILabel alloc] init];
     self.layoutHint.translatesAutoresizingMaskIntoConstraints = NO;
-    self.layoutHint.text = @"HOLD A CONTROL · PINCH ANYWHERE TO RESIZE · 3-FINGER TAP FOR DONE";
+    self.layoutHint.text = @"DRAG TO MOVE · HOLD + PINCH TO RESIZE · TAP DONE TO SAVE";
+    self.layoutHint.adjustsFontSizeToFitWidth = YES;
+    self.layoutHint.minimumScaleFactor = 0.7;
     self.layoutHint.textAlignment = NSTextAlignmentCenter;
     self.layoutHint.font = [UIFont systemFontOfSize:13 weight:UIFontWeightHeavy];
     self.layoutHint.textColor = UIColor.whiteColor;
@@ -1774,15 +1783,25 @@ static void MCLARegisterGraphicsDefaults(void) {
 
 - (void)toggleTouchLayoutEditing:(id)sender {
     (void)sender;
-    if (self.physicalControllerConnected) return;
-    if (![NSUserDefaults.standardUserDefaults boolForKey:@"MCLATouchEnabledControlOverhaulTest"]) {
-        [self showControlsOptions:nil];
+    if (!self.editingTouchLayout && [self connectedGameController]) {
+        UIAlertController* notice = [UIAlertController alertControllerWithTitle:@"Touch layout"
+            message:@"Disconnect your controller to edit. Touch controls stay hidden while a controller is connected."
+            preferredStyle:UIAlertControllerStyleAlert];
+        [notice addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:notice animated:YES completion:nil];
         return;
     }
     self.editingTouchLayout = !self.editingTouchLayout;
     self.controlResize.enabled=self.editingTouchLayout;
     if (self.editingTouchLayout) { MCLAResetVirtualGamepad(); [self clearSlidingInputs];
-        self.overhaulGasHeld=NO; self.overhaulHandbrakeHeld=NO; }
+        self.overhaulGasHeld=NO; self.overhaulHandbrakeHeld=NO;
+        [self.steeringStick reset]; [self.xboxCameraStick reset]; [self.cameraStick reset];
+        [self.toolbarTimer invalidate]; self.toolbarTimer = nil;
+        self.toolbarVisible = YES;
+    } else {
+        [NSUserDefaults.standardUserDefaults synchronize];
+        [self hideGameplayToolbar];
+    }
     for (UIView* control in self.layoutControls.allValues) {
         for (UIGestureRecognizer* recognizer in control.gestureRecognizers)
             if ([recognizer isKindOfClass:UIPanGestureRecognizer.class] ||
@@ -1795,6 +1814,11 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self.editButton setTitle:self.editingTouchLayout ? @"DONE" : @"EDIT"
                      forState:UIControlStateNormal];
     self.layoutHint.hidden = !self.editingTouchLayout;
+    [self setNeedsUpdateOfSupportedInterfaceOrientations];
+    if (self.editingTouchLayout)
+        [self.view.window.windowScene requestGeometryUpdateWithPreferences:
+            [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscape]
+            errorHandler:nil];
     [self refreshBringupStatus];
 }
 
@@ -1927,6 +1951,11 @@ static void MCLARegisterGraphicsDefaults(void) {
     options.onChange = ^{ [weakSelf refreshBringupStatus]; };
     options.onCalibrate = ^{ [weakSelf calibrateTilt]; };
     options.onResetLayout = ^{ [weakSelf resetTouchLayout]; };
+    options.onEditLayout = ^{
+        [weakSelf dismissViewControllerAnimated:YES completion:^{
+            [weakSelf toggleTouchLayoutEditing:nil];
+        }];
+    };
     UINavigationController* navigation = [[UINavigationController alloc]
         initWithRootViewController:options];
     navigation.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
@@ -1969,8 +1998,8 @@ static void MCLARegisterGraphicsDefaults(void) {
     MCLAGraphicsSetVisualExperiments(7u | (MCLAControlOverhaulEnabled() ? 8u : 0u));
     [self applyTouchLayout];
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
-    const BOOL active=mcla::input::TouchControlsActive(gameVisible,
-        UIApplication.sharedApplication.applicationState==UIApplicationStateActive,
+    const BOOL foreground=!self.applicationInactive && UIApplication.sharedApplication.applicationState==UIApplicationStateActive;
+    const BOOL active=mcla::input::TouchControlsActive(gameVisible,foreground,
         [defaults boolForKey:@"MCLATouchEnabledControlOverhaulTest"],connected);
     if (!active && self.touchInputActive) {
         [self.steeringStick reset]; [self.xboxCameraStick reset]; [self.cameraStick reset];
@@ -1978,11 +2007,13 @@ static void MCLARegisterGraphicsDefaults(void) {
         [self clearSlidingInputs];
         self.overhaulGasHeld=NO; self.overhaulHandbrakeHeld=NO;
     }
-    if (!active && self.editingTouchLayout) {
+    if ((!foreground || connected) && self.editingTouchLayout) {
         self.editingTouchLayout = NO;
+        [self hideGameplayToolbar];
         self.controlResize.enabled=NO;
         [self.editButton setTitle:@"EDIT" forState:UIControlStateNormal];
         self.layoutHint.hidden = YES;
+        [self setNeedsUpdateOfSupportedInterfaceOrientations];
         for (UIView* control in self.layoutControls.allValues) {
             for (UIGestureRecognizer* recognizer in control.gestureRecognizers)
                 if ([recognizer isKindOfClass:UIPanGestureRecognizer.class] ||
@@ -1992,23 +2023,26 @@ static void MCLARegisterGraphicsDefaults(void) {
         }
     }
     self.touchInputActive = active;
+    // Previewing never starts the title or changes the touch-enabled preference.
+    // Gameplay input handlers reject touches while the editor is visible.
+    const BOOL visible = active || self.editingTouchLayout;
     const BOOL full = active && !self.editingTouchLayout &&
         [defaults boolForKey:@"MCLAFullPadVisible"];
     // Tilt is a complete replacement for driving-stick steering. Keep the
     // redundant stick out of gameplay and layout editing whenever the option
     // is enabled, while leaving pedals, actions and the optional full pad.
-    const BOOL tiltConfigured = active &&
+    const BOOL tiltConfigured = active && !self.editingTouchLayout &&
         [defaults boolForKey:@"MCLATiltEnabled"];
-    self.steeringStick.hidden = !active || tiltConfigured;
-    self.steeringStick.userInteractionEnabled = active && !tiltConfigured;
-    self.xboxCameraStick.hidden=!active || !xbox;
-    self.xboxCameraStick.userInteractionEnabled=active && xbox;
+    self.steeringStick.hidden = !visible || tiltConfigured;
+    self.steeringStick.userInteractionEnabled = visible && !tiltConfigured;
+    self.xboxCameraStick.hidden=!visible || !xbox;
+    self.xboxCameraStick.userInteractionEnabled=visible && xbox;
     if (tiltConfigured) MCLASetVirtualGamepadLeftStick(0.0f, 0.0f, false);
-    for (UIButton* pedal in self.pedals) pedal.hidden = !active;
+    for (UIButton* pedal in self.pedals) pedal.hidden = !visible;
     [self.drivingActions enumerateObjectsUsingBlock:
         ^(UIButton* action, NSUInteger index, BOOL* stop) {
             (void)stop;
-            action.hidden = !active ||
+            action.hidden = !visible ||
                 ![self isTouchControlDeployed:self.drivingActionKeys[index]];
         }];
     [self.paletteButtons enumerateKeysAndObjectsUsingBlock:
@@ -2068,6 +2102,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 
 - (void)appWillResignActive:(NSNotification*)notification {
     (void)notification;
+    self.applicationInactive = YES;
     MCLAGraphicsSetApplicationActive(false);
     MCLAResetVirtualGamepad();
     [self clearSlidingInputs];
@@ -2076,6 +2111,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 
 - (void)appDidEnterBackground:(NSNotification*)notification {
     (void)notification;
+    self.applicationInactive = YES;
     MCLAGraphicsSetApplicationActive(false);
     MCLAGraphicsFinishPerformanceCapture();
     [self.motionManager stopDeviceMotionUpdates];
@@ -2088,6 +2124,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 
 - (void)appDidBecomeActive:(NSNotification*)notification {
     (void)notification;
+    self.applicationInactive = NO;
     MCLAGraphicsSetApplicationActive(true);
     [self refreshBringupStatus];
 }
@@ -2165,9 +2202,10 @@ static void MCLARegisterGraphicsDefaults(void) {
     const BOOL gameVisible = runtime.entryReached && graphics.titleDrivenFrames > 0 &&
                              !runtime.failed && !runtime.finished;
     self.gameVisible = gameVisible;
-    self.panel.hidden = gameVisible;
-    self.touchControls.hidden = !gameVisible || !self.toolbarVisible;
-    [self.panel setSceneActive:!gameVisible && !self.launchRequested && !runtime.running &&
+    [self refreshTouchInputForGameVisible:gameVisible];
+    self.panel.hidden = gameVisible || self.editingTouchLayout;
+    self.touchControls.hidden = !(gameVisible || self.editingTouchLayout) || !self.toolbarVisible;
+    [self.panel setSceneActive:!gameVisible && !self.editingTouchLayout && !self.launchRequested && !runtime.running &&
         !self.presentedViewController &&
         UIApplication.sharedApplication.applicationState == UIApplicationStateActive];
     if (gameVisible && !self.sceneReleased) {
@@ -2176,7 +2214,6 @@ static void MCLARegisterGraphicsDefaults(void) {
         [self.launcherInputTimer invalidate];
         self.launcherInputTimer = nil;
     }
-    [self refreshTouchInputForGameVisible:gameVisible];
     self.performanceGraph.hidden = !(mcla::DiagnosticsEnabled() && gameVisible &&
         [NSUserDefaults.standardUserDefaults boolForKey:@"MCLAPerformanceOverlay"]);
     if (!self.performanceGraph.hidden)
@@ -2338,7 +2375,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-    return self.launchRequested || self.gameVisible ? UIInterfaceOrientationMaskLandscape
+    return self.launchRequested || self.gameVisible || self.editingTouchLayout ? UIInterfaceOrientationMaskLandscape
         : UIInterfaceOrientationMaskAllButUpsideDown;
 }
 
@@ -2348,10 +2385,12 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 
 - (void)revealGameplayToolbar:(UITapGestureRecognizer*)recognizer {
-    if (recognizer.state != UIGestureRecognizerStateRecognized || !self.gameVisible) return;
+    if (recognizer.state != UIGestureRecognizerStateRecognized || !(self.gameVisible || self.editingTouchLayout)) return;
     self.toolbarVisible = YES;
     self.touchControls.hidden = NO;
     [self.toolbarTimer invalidate];
+    self.toolbarTimer = nil;
+    if (self.editingTouchLayout) return; // Keep Done accessible until editing ends.
     __weak MCLAViewController* weakSelf = self;
     self.toolbarTimer = [NSTimer scheduledTimerWithTimeInterval:10 repeats:NO
         block:^(NSTimer* timer) { (void)timer; [weakSelf hideGameplayToolbar]; }];

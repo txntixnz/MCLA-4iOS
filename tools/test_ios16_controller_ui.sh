@@ -38,23 +38,18 @@ with p.open('w') as f:
 PYTHON
 xcrun simctl install "$device" "$app"
 python3 - "$device" "$out" <<'PYTHON'
-import subprocess,sys,pathlib,shutil,time
+import subprocess,sys,pathlib,shutil
 
 device,out=sys.argv[1],pathlib.Path(sys.argv[2])
 bundle='com.txntixnz.mcla.controller-uitest'
-# File output avoids waiting for inherited console pipes after an app exits.
-run=subprocess.run(['xcrun','simctl','launch','--stdout='+str(out/'app-stdout.log'),'--stderr='+str(out/'app-stderr.log'),device,bundle],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=30)
-print(run.stdout)
-assert run.returncode==0,'Unable to launch controller UI test'
+# Cold simulator launch can exceed 30 seconds. Attach until this finite test exits.
+run=subprocess.run(['xcrun','simctl','launch','--console',device,bundle],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180)
+(out/'controller-ui.log').write_text(run.stdout)
+print(run.stdout[-14000:])
+assert run.returncode==0 and 'MCLA_CONTROLLER_UI_TEST PASS:' in run.stdout,'Controller UI regression did not pass'
 container=subprocess.check_output(['xcrun','simctl','get_app_container',device,bundle,'data'],text=True).strip()
 documents=pathlib.Path(container)/'Documents'
 result=documents/'controller-ui-result.txt'
-for attempt in range(90):
-    if result.exists():break
-    time.sleep(1)
-logs='\n'.join(p.read_text(errors='replace') for p in out.glob('app-*.log'))
-(out/'controller-ui.log').write_text(logs)
-print(logs[-14000:])
 assert result.exists() and 'MCLA_CONTROLLER_UI_TEST PASS' in result.read_text(),'Controller UI regression did not pass'
 print(result.read_text())
 shutil.copyfile(documents/'xbox-touch-layout.png',out/'xbox-touch-layout.png')

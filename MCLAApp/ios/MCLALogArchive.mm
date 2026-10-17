@@ -69,9 +69,20 @@ BOOL Add(NSFileHandle* output, NSString* name, NSURL* source, NSData* content,
         std::vector<Entry> entries;
         BOOL valid = Add(output, @"report.txt", nil,
             [report dataUsingEncoding:NSUTF8StringEncoding], entries, error);
-        // Only known diagnostic locations. Text extensions exclude raw shader/game captures.
+        // Text diagnostics plus bounded shader-gap inputs. Geometry/frame data,
+        // game files and saves remain outside this export.
         NSArray* roots = @[@"Library/Application Support/MCLA", @"Documents/Diagnostics"];
         NSSet* extensions = [NSSet setWithArray:@[@"log", @"txt", @"csv", @"tsv", @"json", @"jsonl"]];
+        NSString* base = [home.path stringByAppendingString:@"/"];
+        NSString* capturePrefix = @"Library/Application Support/MCLA/native-capture/";
+        NSDictionary* capturePatterns = @{
+            @"shaders":@"^(vs|ps)-[0-9A-F]{16}\\.bin$",
+            @"metadata":@"^(vs-elements|vs-interpolators|ps-interpolators)-[0-9A-F]{16}\\.bin$",
+            @"declarations":@"^decl-[0-9A-F]{16}\\.bin$",
+            @"fetch":@"^fetch-[0-9A-F]{16}\\.bin$"};
+        NSUInteger capturedFiles = 0, skippedCaptureFiles = 0;
+        uint64_t capturedBytes = 0;
+        constexpr uint64_t captureLimit = 8 * 1024 * 1024;
         for (NSString* relativeRoot in roots) {
             if (!valid) break;
             NSURL* root = [home URLByAppendingPathComponent:relativeRoot isDirectory:YES];
@@ -99,16 +110,40 @@ BOOL Add(NSFileHandle* output, NSString* name, NSURL* source, NSData* content,
                         [enumerator skipDescendants];
                     continue;
                 }
-                if (!regular.boolValue || (![extensions containsObject:url.pathExtension.lowercaseString] &&
-                    ![url.lastPathComponent.lowercaseString containsString:@".log."])) continue;
-                NSString* base = [home.path stringByAppendingString:@"/"];
+                if (!regular.boolValue) continue;
                 if (![url.URLByResolvingSymlinksInPath.path hasPrefix:base]) {
                     valid = Fail(error, @"A diagnostic path resolves outside app storage."); break;
                 }
-                valid = Add(output, [url.URLByResolvingSymlinksInPath.path substringFromIndex:base.length], url, nil, entries, error);
+                NSString* relative = [url.URLByResolvingSymlinksInPath.path substringFromIndex:base.length];
+                const BOOL text = [extensions containsObject:url.pathExtension.lowercaseString] ||
+                    [url.lastPathComponent.lowercaseString containsString:@".log."];
+                BOOL shaderGap = NO;
+                if (!text && [relative hasPrefix:capturePrefix]) {
+                    NSArray* parts = [[relative substringFromIndex:capturePrefix.length] pathComponents];
+                    NSString* pattern = parts.count == 2 ? capturePatterns[parts[0]] : nil;
+                    if (pattern && [parts[1] rangeOfString:pattern options:NSRegularExpressionSearch].location != NSNotFound) {
+                        NSNumber* bytes = nil;
+                        if (![url getResourceValue:&bytes forKey:NSURLFileSizeKey error:error]) { valid=NO; break; }
+                        if (bytes.unsignedLongLongValue <= 65536 && capturedFiles < 512 &&
+                            capturedBytes + bytes.unsignedLongLongValue <= captureLimit) {
+                            shaderGap = YES;
+                            capturedBytes += bytes.unsignedLongLongValue;
+                            ++capturedFiles;
+                        } else ++skippedCaptureFiles;
+                    }
+                }
+                if (!text && !shaderGap) continue;
+                valid = Add(output, relative, url, nil, entries, error);
                 if (!valid) break;
             }
             if (enumerationError) { if (error) *error = enumerationError; valid = NO; }
+        }
+        if (valid && (capturedFiles || skippedCaptureFiles)) {
+            NSDictionary* captureReport = @{@"included_files":@(capturedFiles),
+                @"included_bytes":@(capturedBytes), @"skipped_by_limit":@(skippedCaptureFiles),
+                @"maximum_bytes":@(captureLimit), @"maximum_file_bytes":@65536};
+            NSData* data = [NSJSONSerialization dataWithJSONObject:captureReport options:NSJSONWritingPrettyPrinted error:error];
+            valid = data && Add(output, @"shader-gap-export.json", nil, data, entries, error);
         }
         // These launcher/render diagnostic reports live directly in Documents.
         for (NSString* name in @[@"mcla-render-probe.json", @"mcla-control-layout.json"]) {

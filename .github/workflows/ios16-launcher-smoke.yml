@@ -11,6 +11,8 @@ on:
       - 'MCLAApp/ios/MCLAViewController.mm'
       - 'MCLAApp/ios/MCLAControlArtwork.h'
       - 'MCLAApp/ios/MCLAXboxTouchLayout.h'
+      - 'MCLAApp/ios/MCLALogArchive.mm'
+      - 'tools/test_mcla_log_archive.py'
       - 'MCLAApp/runtime/MCLAControllerInput.h'
       - 'MCLAApp/runtime/MCLABootstrapSubsystems.cpp'
       - 'tools/test_mcla_controller_input.cpp'
@@ -42,6 +44,8 @@ jobs:
           cmake --version
       - name: Check native graphics hook linker bindings
         run: python3 tools/test_ios16_aot_graphics.py -v
+      - name: Verify bounded shader-gap export and diagnostic ZIP integrity
+        run: python3 tools/test_mcla_log_archive.py
       - name: Stress the owned-byte Metal loader with limited file descriptors
         run: |
           xcrun clang++ -std=c++23 -fobjc-arc -fblocks tools/test_mcla_metal_library.mm \

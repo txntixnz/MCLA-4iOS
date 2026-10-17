@@ -4,6 +4,7 @@
 #import <GameController/GameController.h>
 #include "MCLABootstrapSubsystems.h"
 #include <cassert>
+#include <cmath>
 uint16_t MCLAControlPreviewButtons();
 bool MCLAControlPreviewRightTrigger();
 bool MCLAControlPreviewLeftTrigger();
@@ -22,6 +23,17 @@ bool MCLAControlPreviewRightStickActive();
 - (void)appWillResignActive:(NSNotification*)notification;
 - (void)appDidBecomeActive:(NSNotification*)notification;
 - (void)resetTouchLayout;
+- (void)showControlsOptions:(id)sender;
+- (void)dragTouchControl:(UIPanGestureRecognizer*)pan;
+- (void)applyTouchLayout;
+@end
+@interface ControllerPreviewDrag : UIPanGestureRecognizer
+@property(nonatomic,assign) CGPoint movement;
+@end
+@implementation ControllerPreviewDrag
+- (CGPoint)translationInView:(UIView*)view { (void)view; return self.movement; }
+- (void)setTranslation:(CGPoint)translation inView:(UIView*)view { (void)view; self.movement=translation; }
+- (UIGestureRecognizerState)state { return UIGestureRecognizerStateEnded; }
 @end
 @interface ControllerPreview : MCLAViewController
 @property(nonatomic,strong) GCController* testPad;
@@ -58,6 +70,60 @@ bool MCLAControlPreviewRightStickActive();
 }
 - (void)runTests {
     assert(self.view.bounds.size.width>self.view.bounds.size.height);
+    [self notifyController:NO];
+    [self showControlsOptions:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
+        assert([navigation isKindOfClass:UINavigationController.class]);
+        UITableViewController* options=(UITableViewController*)navigation.topViewController;
+        NSIndexPath* edit=[NSIndexPath indexPathForRow:0 inSection:1];
+        UITableViewCell* row=[options.tableView.dataSource tableView:options.tableView cellForRowAtIndexPath:edit];
+        assert([row.accessibilityIdentifier isEqual:@"mcla.controls.editTouchLayout"]);
+        [options.tableView.delegate tableView:options.tableView didSelectRowAtIndexPath:edit];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{ [self testEditorThenGameplay]; });
+    });
+}
+- (void)testEditorThenGameplay {
+    assert(!self.presentedViewController);
+    assert([[self valueForKey:@"editingTouchLayout"] boolValue]);
+    assert(![[self valueForKey:@"gameVisible"] boolValue]);
+    assert(((UIView*)[self valueForKey:@"panel"]).hidden);
+    assert(!((UIView*)[self valueForKey:@"touchControls"]).hidden);
+    assert(![self valueForKey:@"toolbarTimer"]);
+    UIButton* done=[self valueForKey:@"editButton"];
+    assert(!done.hidden && [done.currentTitle isEqual:@"DONE"]);
+    [self.view layoutIfNeeded];
+    NSDictionary* controls=[self valueForKey:@"layoutControls"];
+    UIButton* pause=controls[@"pause"];
+    const CGPoint original=pause.center;
+    ControllerPreviewDrag* drag=[[ControllerPreviewDrag alloc] init];
+    drag.movement=CGPointMake(-25,-35);
+    [pause addGestureRecognizer:drag];
+    [self dragTouchControl:drag];
+    assert(fabs(pause.center.x-original.x+25)<1 && fabs(pause.center.y-original.y+35)<1);
+    [pause removeGestureRecognizer:drag];
+    [self gamepadButtonDown:pause]; [self assertNeutral];
+    [done sendActionsForControlEvents:UIControlEventTouchUpInside];
+    assert(![[self valueForKey:@"editingTouchLayout"] boolValue]);
+    assert(!((UIView*)[self valueForKey:@"panel"]).hidden);
+    [self applyTouchLayout]; [self.view layoutIfNeeded];
+    assert(fabs(pause.center.y-original.y+35)<1);
+    [self toggleTouchLayoutEditing:nil];
+    assert(fabs(pause.center.y-original.y+35)<1);
+    [done sendActionsForControlEvents:UIControlEventTouchUpInside];
+    NSUserDefaults* defaults=NSUserDefaults.standardUserDefaults;
+    [defaults setBool:NO forKey:@"MCLATouchEnabledControlOverhaulTest"];
+    [self toggleTouchLayoutEditing:nil];
+    [self refreshBringupStatus];
+    assert([[self valueForKey:@"editingTouchLayout"] boolValue]);
+    assert(![defaults boolForKey:@"MCLATouchEnabledControlOverhaulTest"]);
+    [done sendActionsForControlEvents:UIControlEventTouchUpInside];
+    [defaults setBool:YES forKey:@"MCLATouchEnabledControlOverhaulTest"];
+    [self resetTouchLayout];
+    [self notifyController:YES];
+    [self runGameplayTests];
+}
+- (void)runGameplayTests {
     [self launchMCLA:nil]; [self refreshBringupStatus];
     assert([[self valueForKey:@"gameVisible"] boolValue]);
     [self assertHidden]; // already connected at launch
@@ -72,6 +138,8 @@ bool MCLAControlPreviewRightStickActive();
     assert([[a valueForKey:@"artworkKey"] isEqual:@"xbox_A"]);
     assert(a.center.y>b.center.y && b.center.x>a.center.x && x.center.x<a.center.x && y.center.y<b.center.y);
     CGRect safe=UIEdgeInsetsInsetRect(self.view.bounds,self.view.safeAreaInsets);
+    for(NSString* key in @[@"gps",@"pause"])
+        assert(CGRectGetMinY(((UIView*)controls[key]).frame)>CGRectGetMinY(safe)+safe.size.height*.8);
     NSMutableArray<UIView*>* visible=[NSMutableArray array];
     for(UIView* control in controls.allValues) if(!control.hidden) {
         assert(CGRectContainsRect(safe,control.frame));
@@ -101,6 +169,7 @@ bool MCLAControlPreviewRightStickActive();
     [self notifyController:NO];[self assertNeutral];
     assert([[self valueForKey:@"touchInputActive"] boolValue]);
     [self toggleTouchLayoutEditing:nil]; assert([[self valueForKey:@"editingTouchLayout"] boolValue]);
+    assert(!((UIView*)[self valueForKey:@"touchControls"]).hidden);
     [self notifyController:YES];[self assertHidden];
     assert(![[self valueForKey:@"editingTouchLayout"] boolValue]);
     [self notifyController:NO];
@@ -115,7 +184,7 @@ bool MCLAControlPreviewRightStickActive();
     assert(([[defaults dictionaryForKey:@"MCLATouchLayoutPositionsOverhaul"] isEqual:@{@"steer":@[@.35,@.60]}]));
     assert([[defaults arrayForKey:@"MCLATouchActiveControlsXbox"] count]==14);
     [@"MCLA_CONTROLLER_UI_TEST PASS\n" writeToFile:[documents stringByAppendingPathComponent:@"controller-ui-result.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSLog(@"MCLA_CONTROLLER_UI_TEST PASS: preconnected pad, hot connect/disconnect, held-input release, late-event rejection, edit/background safety, disabled-touch preference, Xbox buttons/spacing/artwork and saved-layout isolation");
+    NSLog(@"MCLA_CONTROLLER_UI_TEST PASS: settings editor entry before launch, drag/save/reopen, disabled-touch preview, bottom Start/View, preconnected pad, hot connect/disconnect, held-input release, late-event rejection, edit/background safety, Xbox buttons/spacing/artwork and saved-layout isolation");
     exit(0);
 }
 @end

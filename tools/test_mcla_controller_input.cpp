@@ -54,6 +54,10 @@ int main() {
         assert(std::fabs(a.x-y.x)<.001 && std::fabs(b.y-x.y)<.001);
         assert(XboxControlFrame("steer",size[0],size[1])->x<size[0]*.5);
         assert(XboxControlFrame("look",size[0],size[1])->x>size[0]*.5);
+        for(auto key:{"gps","pause"}) {
+            auto menu=*XboxControlFrame(key,size[0],size[1]);
+            assert(menu.y-menu.height/2>size[1]*.8);
+        }
     }
     assert(!XboxControlFrame("missing",834,407));
     assert(!XboxControlFrame("steer",0,407));
