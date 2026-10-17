@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: txntixnz/MCLA-4iOS
-          ref: 9b5334c3ce6b07926974041318e58fb126d17102
+          ref: d759b29a4f054d3dfb1131b4a55358fbf8883604
           path: source
           submodules: false
       - name: Test graphics hook linker bindings
@@ -127,8 +127,8 @@ jobs:
           lipo "$APP/MCLAApp" -verify_arch arm64
           xcrun vtool -show-build "$APP/MCLAApp" | tee out/application-target.txt
           /usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName MCLA iOS16 Native Test' "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 18' "$APP/Info.plist"
-          /usr/libexec/PlistBuddy -c 'Add :MCLABringupProfile string ios16-native-stage18' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Set :CFBundleVersion 19' "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :MCLABringupProfile string ios16-native-stage19' "$APP/Info.plist"
           mkdir -p "$APP/OpenSourceNotices"
           cp -R source/licenses "$APP/OpenSourceNotices/"
           cp source/LICENSE source/CREDITS.md source/THIRD_PARTY_NOTICES.md "$APP/OpenSourceNotices/"
@@ -150,17 +150,17 @@ jobs:
           codesign --verify --strict "$APP"
           mkdir -p package/Payload
           ditto "$APP" package/Payload/MCLAApp.app
-          (cd package && zip -qry ../out/MCLA_iOS16_STAGE18_LAYOUT_AND_GRAPHICS_EVIDENCE.ipa Payload)
-          unzip -t out/MCLA_iOS16_STAGE18_LAYOUT_AND_GRAPHICS_EVIDENCE.ipa | tail -1
-          python3 source/tools/ios16_verify_runtime_ipa.py out/MCLA_iOS16_STAGE18_LAYOUT_AND_GRAPHICS_EVIDENCE.ipa \
+          (cd package && zip -qry ../out/MCLA_iOS16_STAGE19_CONTROLLER_TRIGGERS.ipa Payload)
+          unzip -t out/MCLA_iOS16_STAGE19_CONTROLLER_TRIGGERS.ipa | tail -1
+          python3 source/tools/ios16_verify_runtime_ipa.py out/MCLA_iOS16_STAGE19_CONTROLLER_TRIGGERS.ipa \
             --shader-evidence private-shaders/private-shader-rebuild/compatibility-report.json \
             --json out/runtime_ipa_audit.json
-          shasum -a 256 out/MCLA_iOS16_STAGE18_LAYOUT_AND_GRAPHICS_EVIDENCE.ipa > out/ipa-sha256.txt
-          printf '%s\n' 'STAGE 18: accessible touch layout editor, bottom Start/View, bounded shader-gap export and precise Metal error attribution. 604 validated libraries retained. Device test pending.' > out/STATUS.txt
+          shasum -a 256 out/MCLA_iOS16_STAGE19_CONTROLLER_TRIGGERS.ipa > out/ipa-sha256.txt
+          printf '%s\n' 'STAGE 19: explicit analog trigger calibration, live pressure readouts and input range diagnostics. Stage 18 layout/shader-export/GPU attribution retained. Physical controller test pending.' > out/STATUS.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: MCLA-Private-iOS16-Stage18-Layout-and-Graphics-Evidence
+          name: MCLA-Private-iOS16-Stage19-Controller-Triggers
           path: out
           compression-level: 9
           retention-days: 7
