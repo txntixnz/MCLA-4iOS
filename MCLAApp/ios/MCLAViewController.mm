@@ -2120,6 +2120,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     (void)notification;
     self.applicationInactive = YES;
     MCLAGraphicsSetApplicationActive(false);
+    MCLAPersistControllerTriggerDiagnostics();
     MCLAResetVirtualGamepad();
     [self clearSlidingInputs];
     [self refreshTouchInputForGameVisible:NO];

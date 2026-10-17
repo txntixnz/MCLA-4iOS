@@ -7,4 +7,5 @@ extern "C" uint8_t MCLAControllerTriggerValue(void* controller, bool right, floa
 #import <GameController/GameController.h>
 UIViewController* MCLACreateTriggerSettings(GCController* controller);
 NSString* MCLAControllerTriggerDiagnostics(void);
+void MCLAPersistControllerTriggerDiagnostics(void);
 #endif

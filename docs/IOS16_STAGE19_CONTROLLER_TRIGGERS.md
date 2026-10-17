@@ -20,6 +20,8 @@ holds physical pedals at zero, cancels unfinished calibration on disconnect or
 backgrounding, and requires release after leaving before pedals can drive again.
 The input hot path caches profile data under a mutex and performs no file writes.
 Log export includes current-process raw min/max, mapped maxima and saved ranges.
+Resigning active saves a bounded snapshot so this evidence survives reopening
+the app to export logs. The snapshot has its own date and build identifier.
 
 Validation covers all 256 levels for normal, half and offset ranges, bad endpoints
 and nonfinite samples. The production UIKit test uses real GameController

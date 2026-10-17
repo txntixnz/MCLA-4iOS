@@ -102,7 +102,7 @@ extern "C" uint8_t MCLAControllerTriggerValue(void* rawController,bool right,flo
     return output;
 }
 
-NSString* MCLAControllerTriggerDiagnostics(void) {
+static NSString* TriggerDiagnostics(bool persist) {
     std::lock_guard lock(stateMutex);
     NSMutableArray* entries=[NSMutableArray array];
     for(MCLATriggerState* state in States().objectEnumerator) {
@@ -114,11 +114,18 @@ NSString* MCLAControllerTriggerDiagnostics(void) {
                 @"full":@(state->range[i].full)}];
         [entries addObject:@{@"controller_type":state.identity,@"triggers":triggers}];
     }
-    NSData* data=[NSJSONSerialization dataWithJSONObject:@{@"controllers":entries,
-        @"profiles":[NSUserDefaults.standardUserDefaults dictionaryForKey:ProfilesKey] ?: @{}}
+    NSDictionary* current=@{@"controllers":entries,@"recorded_at":NSDate.date.description,
+        @"build":NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] ?: @"unknown",
+        @"profiles":[NSUserDefaults.standardUserDefaults dictionaryForKey:ProfilesKey] ?: @{}};
+    NSUserDefaults* defaults=NSUserDefaults.standardUserDefaults;
+    if(persist && entries.count) [defaults setObject:current forKey:@"MCLAControllerTriggerLastSessionV1"];
+    NSDictionary* previous=[defaults dictionaryForKey:@"MCLAControllerTriggerLastSessionV1"] ?: @{};
+    NSData* data=[NSJSONSerialization dataWithJSONObject:@{@"current_process":current,@"last_background_snapshot":previous}
         options:NSJSONWritingPrettyPrinted error:nil];
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"unavailable";
 }
+NSString* MCLAControllerTriggerDiagnostics(void) { return TriggerDiagnostics(false); }
+void MCLAPersistControllerTriggerDiagnostics(void) { (void)TriggerDiagnostics(true); }
 
 @interface MCLATriggerSettingsController : UIViewController {
     std::array<TriggerRange,2> proposed;

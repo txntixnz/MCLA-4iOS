@@ -50,6 +50,10 @@ static UIViewController* TestTriggerCalibration(void) {
     [pad.extendedGamepad.leftTrigger setValue:0];assert(read(false)==0);
     [pad.extendedGamepad.leftTrigger setValue:.25f];assert(read(false)==128);
     [pad.extendedGamepad.leftTrigger setValue:.5f];assert(read(false)==255);
+    MCLAPersistControllerTriggerDiagnostics();
+    NSDictionary* evidence=[NSUserDefaults.standardUserDefaults dictionaryForKey:@"MCLAControllerTriggerLastSessionV1"];
+    assert([evidence[@"controllers"] count]>0);
+    assert([MCLAControllerTriggerDiagnostics() containsString:@"last_background_snapshot"]);
     // A new controller instance of the same type loads persisted endpoints.
     auto* reconnected=[GCController controllerWithExtendedGamepad];
     assert(MCLAControllerTriggerValue((__bridge void*)reconnected,true,.4f)==255);
