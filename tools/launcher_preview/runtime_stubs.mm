@@ -44,8 +44,14 @@ bool MCLAGraphicsStartPerformanceCapture(void) { return true; }
 void MCLAGraphicsFinishPerformanceCapture(void) {}
 }
 static uint16_t previewButtons=0;
+static uint64_t previewButtonEdges=0;
 static bool previewLeftTrigger=false;
-void MCLASetVirtualGamepadButton(uint16_t mask,bool held) { if(held) previewButtons|=mask; else previewButtons&=~mask; }
+void MCLASetVirtualGamepadButton(uint16_t mask,bool held) {
+    uint16_t previous=previewButtons;
+    if(held) previewButtons|=mask; else previewButtons&=~mask;
+    if(previous!=previewButtons) ++previewButtonEdges;
+}
+uint64_t MCLAControlPreviewButtonEdges() { return previewButtonEdges; }
 uint16_t MCLAControlPreviewButtons() { return previewButtons; }
 bool MCLAControlPreviewLeftTrigger() { return previewLeftTrigger; }
 void MCLASetVirtualGamepadTrigger(bool right,bool held) { if (right) previewRightTrigger=held; else previewLeftTrigger=held; }

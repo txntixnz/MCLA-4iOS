@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cmath>
 uint16_t MCLAControlPreviewButtons();
+uint64_t MCLAControlPreviewButtonEdges();
 bool MCLAControlPreviewRightTrigger();
 bool MCLAControlPreviewLeftTrigger();
 bool MCLAControlPreviewLeftStickActive();
@@ -141,6 +142,48 @@ static UIViewController* TestTriggerCalibration(void) {
     assert(((UIView*)[self valueForKey:@"slideControls"]).hidden);
     [self assertNeutral];
 }
+- (void)assertEditorGestures:(BOOL)editing {
+    for(UIView* control in [[self valueForKey:@"layoutControls"] allValues]) {
+        BOOL hasRemoval=NO;
+        for(UIGestureRecognizer* gesture in control.gestureRecognizers) {
+            if([gesture isKindOfClass:UITapGestureRecognizer.class]) {
+                hasRemoval=YES;
+                assert(((UITapGestureRecognizer*)gesture).numberOfTapsRequired==2);
+                assert(!gesture.delaysTouchesEnded);
+            }
+            assert(gesture.enabled==editing);
+        }
+        assert(hasRemoval);
+    }
+}
+- (void)testDpadTapRelease {
+    [self assertNeutral];
+    [self assertEditorGestures:NO];
+    // No active ancestor gesture may postpone or cancel a gameplay release.
+    for(UIGestureRecognizer* gesture in self.view.gestureRecognizers)
+        if(gesture.enabled) assert(!gesture.delaysTouchesEnded && !gesture.cancelsTouchesInView);
+    NSDictionary* controls=[self valueForKey:@"layoutControls"];
+    for(NSString* key in @[@"hud",@"hydraulics",@"track_left",@"track_right"]) {
+        UIButton* button=controls[key];
+        uint16_t mask=(uint16_t)button.tag;
+        uint64_t edges=MCLAControlPreviewButtonEdges();
+        for(int tap=0;tap<2;++tap) {
+            [button sendActionsForControlEvents:UIControlEventTouchDown];
+            assert(MCLAControlPreviewButtons()==mask);
+            assert(MCLAControlPreviewButtonEdges()==++edges);
+            for(int poll=0;poll<120;++poll) assert(MCLAControlPreviewButtons()==mask);
+            assert(MCLAControlPreviewButtonEdges()==edges); // holding does not emit extra edges
+            [button sendActionsForControlEvents:UIControlEventTouchUpInside];
+            [self assertNeutral];
+            assert(MCLAControlPreviewButtonEdges()==++edges);
+        }
+        [button sendActionsForControlEvents:UIControlEventTouchDown];
+        [button sendActionsForControlEvents:UIControlEventTouchCancel];
+        [self assertNeutral];
+        assert(MCLAControlPreviewButtonEdges()==edges+2);
+    }
+    NSLog(@"MCLA_DPAD_TEST PASS: all four directions release immediately through actions, distinct rapid taps, held state and cancellation; editor gestures disabled and ancestor releases non-delaying");
+}
 - (void)runTests {
     assert(self.view.bounds.size.width>self.view.bounds.size.height);
     UIViewController* triggers=TestTriggerCalibration();
@@ -179,6 +222,7 @@ static UIViewController* TestTriggerCalibration(void) {
 - (void)testEditorThenGameplay {
     assert(!self.presentedViewController);
     assert([[self valueForKey:@"editingTouchLayout"] boolValue]);
+    [self assertEditorGestures:YES];
     assert(![[self valueForKey:@"gameVisible"] boolValue]);
     assert(((UIView*)[self valueForKey:@"panel"]).hidden);
     assert(!((UIView*)[self valueForKey:@"touchControls"]).hidden);
@@ -198,6 +242,7 @@ static UIViewController* TestTriggerCalibration(void) {
     [self gamepadButtonDown:pause]; [self assertNeutral];
     [done sendActionsForControlEvents:UIControlEventTouchUpInside];
     assert(![[self valueForKey:@"editingTouchLayout"] boolValue]);
+    [self assertEditorGestures:NO];
     assert(!((UIView*)[self valueForKey:@"panel"]).hidden);
     [self applyTouchLayout]; [self.view layoutIfNeeded];
     assert(fabs(pause.center.y-original.y+35)<1);
@@ -239,6 +284,7 @@ static UIViewController* TestTriggerCalibration(void) {
         for(UIView* other in visible) assert(!CGRectIntersectsRect(control.frame,other.frame));
         [visible addObject:control];
     }
+    [self testDpadTapRelease];
     // Capture actual UIKit artwork before the physical-pad takeover.
     UIGraphicsImageRenderer* renderer=[[UIGraphicsImageRenderer alloc] initWithSize:self.view.bounds.size];
     UIImage* image=[renderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
@@ -265,6 +311,7 @@ static UIViewController* TestTriggerCalibration(void) {
     assert(!((UIView*)[self valueForKey:@"touchControls"]).hidden);
     [self notifyController:YES];[self assertHidden];
     assert(![[self valueForKey:@"editingTouchLayout"] boolValue]);
+    [self assertEditorGestures:NO];
     [self notifyController:NO];
     [self appWillResignActive:nil];[self assertHidden];
     [self appDidBecomeActive:nil]; assert([[self valueForKey:@"touchInputActive"] boolValue]);
@@ -277,7 +324,7 @@ static UIViewController* TestTriggerCalibration(void) {
     assert(([[defaults dictionaryForKey:@"MCLATouchLayoutPositionsOverhaul"] isEqual:@{@"steer":@[@.35,@.60]}]));
     assert([[defaults arrayForKey:@"MCLATouchActiveControlsXbox"] count]==14);
     [@"MCLA_CONTROLLER_UI_TEST PASS\n" writeToFile:[documents stringByAppendingPathComponent:@"controller-ui-result.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSLog(@"MCLA_CONTROLLER_UI_TEST PASS: settings editor entry before launch, drag/save/reopen, disabled-touch preview, bottom Start/View, preconnected pad, hot connect/disconnect, held-input release, late-event rejection, edit/background safety, Xbox buttons/spacing/artwork and saved-layout isolation");
+    NSLog(@"MCLA_CONTROLLER_UI_TEST PASS: D-pad tap/hold/release/cancel and gesture isolation, settings editor entry before launch, drag/save/reopen, disabled-touch preview, bottom Start/View, preconnected pad, hot connect/disconnect, held-input release, late-event rejection, edit/background safety, Xbox buttons/spacing/artwork and saved-layout isolation");
     exit(0);
 }
 @end
