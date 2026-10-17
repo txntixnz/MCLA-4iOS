@@ -42,6 +42,11 @@ input release, late-event rejection, editing/background safety, disabled-touch
 preferences, actual constraints/artwork and saved-layout isolation. Its image
 shows actual UIKit controls on a blank preview surface, not game playback.
 
-Apple-host checks, simulator execution, the full ARM64/iOS 16 runtime build,
-signing and independent IPA audits are required before delivery. Physical
-controller, wireless latency and rumble behavior require the user's device test.
+Apple-host input checks and the full native ARM64/iOS 16 build/signing pass in
+private run `38993546107`. Public run `38993644995` passes the launcher build and
+production UIKit connection/layout regression. The actual UIKit preview was
+inspected. The shipping app tree is identical between its tested source and the
+full-build pin. Independent downloaded-byte audits confirm build 17, the target,
+entitlements, all 13 strong graphics hooks and all 604 unchanged shader hashes.
+Physical controller response, wireless latency and rumble still require the
+user's device test.

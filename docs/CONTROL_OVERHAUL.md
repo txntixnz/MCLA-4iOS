@@ -1,5 +1,10 @@
 # Experimental driving controls
 
+The iOS 16 backport’s Stage 17 defaults to a conventional Xbox touch layout and
+automatically hides touch input when a full controller connects. The cyan art
+and legacy driving layout below remain available. See
+[Stage 17 controller support](IOS16_STAGE17_CONTROLLER_SUPPORT.md).
+
 Version 1.0 includes the work developed on `control-overhaul-test`, based on `control-overhaul`. The in-game HUD experiment and touch driving controls are enabled by default. Dedicated test preference keys leave the original branch’s enable/disable preferences untouched. Both switches remain available in **Driving Controls** for A/B testing. The original `control-overhaul` branch defaults the experiment off. `MCLA_CONTROL_OVERHAUL=1` temporarily selects it for a development launch; `0` forces the original layout.
 
 The experiment adds left-side nitro, pause/camera buttons at the top, and gas, brake and combined gas/handbrake controls at the bottom right. The user’s October 5 button-sheet JPG is reconstructed as native vector artwork in `MCLAControlArtwork.h`: translucent cyan double rings, core icons, dotted pedals, normal/pressed/disabled states, and a separate joystick base and knob. The artwork applies to both layouts and the rearrangeable palette. Existing action bindings and steering input sensitivity are retained; no new shift/look-back bindings are invented from the artwork. Tilt steering still replaces the joystick when enabled. Other actions remain available through the existing pad/palette. Experimental positions, sizes and active controls use separate `…Overhaul` preference keys. Reset only affects the selected layout. Switching layouts keeps the new artwork, retains the original button bindings/titles internally and releases held input. The experimental gas/handbrake lower zone remains a separate editable control. Its default position joins the gas zone across device aspect ratios; moving either zone saves its independent position. When aligned, they draw a shared split-pedal outline; separated zones draw complete outlines.
