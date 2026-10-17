@@ -3,6 +3,7 @@
 #import "MCLAViewController.h"
 #import <GameController/GameController.h>
 #include "MCLABootstrapSubsystems.h"
+#import "MCLAControllerTriggers.h"
 #include <cassert>
 #include <cmath>
 uint16_t MCLAControlPreviewButtons();
@@ -10,6 +11,74 @@ bool MCLAControlPreviewRightTrigger();
 bool MCLAControlPreviewLeftTrigger();
 bool MCLAControlPreviewLeftStickActive();
 bool MCLAControlPreviewRightStickActive();
+@interface UIViewController (TriggerTest)
+- (void)advanceCalibration;
+- (void)pollTriggers;
+- (void)resetCalibration;
+- (void)interrupted:(NSNotification*)notification;
+@end
+
+static UIViewController* TestTriggerCalibration(void) {
+    auto* pad=[GCController controllerWithExtendedGamepad];
+    auto read=[&](bool right) {
+        return MCLAControllerTriggerValue((__bridge void*)pad,right,
+            right ? pad.extendedGamepad.rightTrigger.value : pad.extendedGamepad.leftTrigger.value);
+    };
+    [NSUserDefaults.standardUserDefaults removeObjectForKey:@"MCLAControllerTriggerProfilesV1"];
+    for(float value:{0.f,.25f,.5f,.75f,1.f}) {
+        [pad.extendedGamepad.leftTrigger setValue:value];
+        [pad.extendedGamepad.rightTrigger setValue:1-value];
+        assert(read(false)==std::lround(value*255) && read(true)==std::lround((1-value)*255));
+    }
+    UIViewController* page=MCLACreateTriggerSettings(pad);
+    [page loadViewIfNeeded];[page viewWillAppear:NO];
+    [pad.extendedGamepad.leftTrigger setValue:0];[pad.extendedGamepad.rightTrigger setValue:0];
+    [page advanceCalibration];[page advanceCalibration];[page advanceCalibration];
+    assert([[page valueForKey:@"step"] integerValue]==2); // no travel: reject Save
+    [pad.extendedGamepad.leftTrigger setValue:.5f];[page pollTriggers];[page advanceCalibration];
+    assert([[page valueForKey:@"step"] integerValue]==2); // both sides required
+    [pad.extendedGamepad.leftTrigger setValue:0];
+    [pad.extendedGamepad.rightTrigger setValue:.4f];[page pollTriggers];
+    assert(read(false)==0 && read(true)==0); // guest pedals suspended in setup
+    [page advanceCalibration];
+    assert([[page valueForKey:@"step"] integerValue]==0);
+    [page viewWillDisappear:NO];
+    assert(read(true)==0); // held throttle cannot restart the car on Back
+    [pad.extendedGamepad.rightTrigger setValue:0];assert(read(true)==0);
+    [pad.extendedGamepad.rightTrigger setValue:.2f];assert(read(true)==128);
+    [pad.extendedGamepad.rightTrigger setValue:.4f];assert(read(true)==255);
+    [pad.extendedGamepad.leftTrigger setValue:0];assert(read(false)==0);
+    [pad.extendedGamepad.leftTrigger setValue:.25f];assert(read(false)==128);
+    [pad.extendedGamepad.leftTrigger setValue:.5f];assert(read(false)==255);
+    // A new controller instance of the same type loads persisted endpoints.
+    auto* reconnected=[GCController controllerWithExtendedGamepad];
+    assert(MCLAControllerTriggerValue((__bridge void*)reconnected,true,.4f)==255);
+    NSDictionary* saved=[NSUserDefaults.standardUserDefaults dictionaryForKey:@"MCLAControllerTriggerProfilesV1"];
+    [page viewWillAppear:NO];[page advanceCalibration];[page advanceCalibration];
+    [page interrupted:nil];
+    assert([[page valueForKey:@"step"] integerValue]==0);
+    assert([[NSUserDefaults.standardUserDefaults dictionaryForKey:@"MCLAControllerTriggerProfilesV1"] isEqual:saved]);
+    [NSNotificationCenter.defaultCenter postNotificationName:GCControllerDidDisconnectNotification object:pad];
+    assert([[page valueForKey:@"disconnected"] boolValue]);
+    [page advanceCalibration];
+    assert([[NSUserDefaults.standardUserDefaults dictionaryForKey:@"MCLAControllerTriggerProfilesV1"] isEqual:saved]);
+    [page viewWillDisappear:NO];
+    page=MCLACreateTriggerSettings(reconnected);[page loadViewIfNeeded];
+    [page resetCalibration];
+    assert(MCLAControllerTriggerValue((__bridge void*)reconnected,true,1)==0);
+    assert(MCLAControllerTriggerValue((__bridge void*)reconnected,true,0)==0);
+    assert(MCLAControllerTriggerValue((__bridge void*)reconnected,true,.5f)==128);
+    // Build a real UIKit preview of the saved half-range repair.
+    [reconnected.extendedGamepad.leftTrigger setValue:0];
+    [reconnected.extendedGamepad.rightTrigger setValue:0];
+    [page advanceCalibration];[page advanceCalibration];
+    [reconnected.extendedGamepad.leftTrigger setValue:.5f];
+    [reconnected.extendedGamepad.rightTrigger setValue:.4f];
+    [page pollTriggers];[page advanceCalibration];
+    assert([((UILabel*)[page valueForKey:@"rightReadout"]).text containsString:@"255/255"]);
+    NSLog(@"MCLA_TRIGGER_TEST PASS: real GameController snapshots, independent analog ranges, partial-save rejection, persisted reconnect, suspended pedals, release rearm, interruption/disconnect cancellation and reset");
+    return page;
+}
 @interface MCLAViewController (ControllerTest)
 - (GCController*)connectedGameController;
 - (void)refreshBringupStatus;
@@ -70,12 +139,32 @@ bool MCLAControlPreviewRightStickActive();
 }
 - (void)runTests {
     assert(self.view.bounds.size.width>self.view.bounds.size.height);
+    UIViewController* triggers=TestTriggerCalibration();
+    UINavigationController* navigation=[[UINavigationController alloc] initWithRootViewController:triggers];
+    navigation.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
+    navigation.modalPresentationStyle=UIModalPresentationFormSheet;
+    [self presentViewController:navigation animated:NO completion:^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+            UIGraphicsImageRenderer* renderer=[[UIGraphicsImageRenderer alloc] initWithSize:self.view.window.bounds.size];
+            UIImage* image=[renderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
+                (void)context;[self.view.window drawViewHierarchyInRect:self.view.window.bounds afterScreenUpdates:YES];
+            }];
+            NSString* docs=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+            assert([UIImagePNGRepresentation(image) writeToFile:[docs stringByAppendingPathComponent:@"controller-triggers.png"] atomically:YES]);
+            [self dismissViewControllerAnimated:NO completion:^{ [self testSettingsEntry]; }];
+        });
+    }];
+}
+- (void)testSettingsEntry {
     [self notifyController:NO];
     [self showControlsOptions:nil];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
         UINavigationController* navigation=(UINavigationController*)self.presentedViewController;
         assert([navigation isKindOfClass:UINavigationController.class]);
         UITableViewController* options=(UITableViewController*)navigation.topViewController;
+        UITableViewCell* triggerRow=[options.tableView.dataSource tableView:options.tableView
+            cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:3]];
+        assert([triggerRow.accessibilityIdentifier isEqual:@"mcla.controls.triggerCalibration"]);
         NSIndexPath* edit=[NSIndexPath indexPathForRow:0 inSection:1];
         UITableViewCell* row=[options.tableView.dataSource tableView:options.tableView cellForRowAtIndexPath:edit];
         assert([row.accessibilityIdentifier isEqual:@"mcla.controls.editTouchLayout"]);

@@ -14,6 +14,8 @@ on:
       - 'MCLAApp/ios/MCLALogArchive.mm'
       - 'tools/test_mcla_log_archive.py'
       - 'MCLAApp/runtime/MCLAControllerInput.h'
+      - 'MCLAApp/ios/MCLAControllerTriggers.h'
+      - 'MCLAApp/ios/MCLAControllerTriggers.mm'
       - 'MCLAApp/runtime/MCLABootstrapSubsystems.cpp'
       - 'tools/test_mcla_controller_input.cpp'
       - 'tools/test_ios16_controller_ui.sh'

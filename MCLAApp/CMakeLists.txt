@@ -242,6 +242,7 @@ set(MCLA_APP_SOURCES
     ios/MCLAMetalView.mm
     ios/MCLAISOReader.cpp
     ios/MCLAGameInput.mm
+    ios/MCLAControllerTriggers.mm
     ios/MCLAViewController.mm
     ios/MCLASaveArchive.mm
     ios/MCLALogArchive.mm

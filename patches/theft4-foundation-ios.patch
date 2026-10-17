@@ -1104,3 +1104,33 @@ index 0184328..693e8e7 100644
      return false;
    }
    if (!file_system_->RegisterDevice(std::move(device))) {
+diff --git a/glue/rexglue-sdk-main/src/input/ios/ios_input_driver.mm b/glue/rexglue-sdk-main/src/input/ios/ios_input_driver.mm
+index e1803b8..ec54cdd 100644
+--- a/glue/rexglue-sdk-main/src/input/ios/ios_input_driver.mm
++++ b/glue/rexglue-sdk-main/src/input/ios/ios_input_driver.mm
+@@ -17,6 +17,10 @@
+
+ #if REX_PLATFORM_IOS
+
++#if MCLA_NATIVE_TITLE
++#include "MCLAControllerTriggers.h"
++#endif
++
+ #import <Foundation/Foundation.h>
+ #import <GameController/GameController.h>
+ #import <CoreHaptics/CoreHaptics.h>
+@@ -341,8 +345,14 @@ void IOSInputDriver::SampleLocked(Slot& slot) {
+   auto& pad = slot.state.gamepad;
+   uint16_t prev_buttons = static_cast<uint16_t>(pad.buttons);
+   pad.buttons = buttons;
++#if MCLA_NATIVE_TITLE
++  // Preserve the actual slot/controller identity for model-specific calibration.
++  pad.left_trigger = MCLAControllerTriggerValue((__bridge void*)c, false, gp.leftTrigger.value);
++  pad.right_trigger = MCLAControllerTriggerValue((__bridge void*)c, true, gp.rightTrigger.value);
++#else
+   pad.left_trigger  = to_trigger(gp.leftTrigger.value);
+   pad.right_trigger = to_trigger(gp.rightTrigger.value);
++#endif
+   pad.thumb_lx = to_axis(gp.leftThumbstick.xAxis.value);
+   pad.thumb_ly = to_axis(gp.leftThumbstick.yAxis.value);
+   pad.thumb_rx = to_axis(gp.rightThumbstick.xAxis.value);

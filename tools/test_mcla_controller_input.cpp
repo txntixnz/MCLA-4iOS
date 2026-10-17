@@ -6,6 +6,24 @@
 #include <vector>
 int main() {
     using namespace mcla::input;
+    TriggerRange standard;
+    TriggerRange half{0,.5f};
+    TriggerRange offset{.1f,.6f};
+    for(int i=0;i<=255;++i) {
+        const float pressure=i/255.f;
+        assert(standard.Convert(pressure)==i);
+        assert(half.Convert(pressure*.5f)==i);
+        assert(offset.Convert(.1f+pressure*.5f)==i);
+    }
+    for(auto range:{standard,half,offset}) {
+        assert(range.Convert(-1)==0 && range.Convert(2)==255);
+        assert(range.Convert(NAN)==0 && range.Convert(INFINITY)==0);
+    }
+    for(auto invalid:{TriggerRange{.5f,.5f},TriggerRange{1,0},TriggerRange{-1,1},
+                      TriggerRange{0,2},TriggerRange{NAN,1}}) {
+        assert(!invalid.Valid());
+        assert(invalid.Convert(1)==255 && invalid.Convert(0)==0);
+    }
     ControllerPacket packet;
     PadSample pad{};
     auto current=packet.Observe(pad);

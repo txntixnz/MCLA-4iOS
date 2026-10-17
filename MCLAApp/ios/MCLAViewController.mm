@@ -25,6 +25,7 @@
 #import "MCLAControlResizeGesture.h"
 #include "MCLAXboxTouchLayout.h"
 #include "MCLAControllerInput.h"
+#import "MCLAControllerTriggers.h"
 
 
 // Version 1.0 enables the redesigned controls and HUD by default. Retain the
@@ -471,25 +472,32 @@ static void MCLARegisterGraphicsDefaults(void) {
         action:@selector(done:)];
 }
 - (void)done:(id)sender { (void)sender; [self dismissViewControllerAnimated:YES completion:nil]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView { (void)tableView; return 3; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView { (void)tableView; return 4; }
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView; return section == 0 ? 6 : section == 1 ? 2 : 1;
 }
 - (NSString*)tableView:(UITableView*)tableView titleForHeaderInSection:(NSInteger)section {
-    (void)tableView; return section == 0 ? @"On-Screen Pad" : section == 1 ? @"Touch Layout" : @"Steering Setup";
+    (void)tableView; return section == 0 ? @"On-Screen Pad" : section == 1 ? @"Touch Layout" : section == 2 ? @"Steering Setup" : @"Physical Controller";
 }
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     return section == 0
         ? @"Touch controls hide automatically when a supported controller connects, and return when it disconnects. Xbox layout uses both sticks, ABXY, D-pad and shoulders. Tilt replaces left-stick steering."
         : section == 1 ? @"Edit before launching or during a game. Drag to move; hold a control and pinch to resize. Tap Done to finish. Disconnect your controller before editing. In game, a three-finger tap opens Settings and Edit."
-        : @"Recenter with your device in your comfortable straight-ahead driving position. Use Invert if left and right feel reversed.";
+        : section == 2 ? @"Recenter with your device in your comfortable straight-ahead driving position. Use Invert if left and right feel reversed."
+        : @"Check analog throttle and brake input, and calibrate reduced trigger travel.";
 }
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)path {
     (void)tableView;
     UITableViewCell* cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
                                                    reuseIdentifier:nil];
     if (path.section != 0) {
+        if(path.section==3) {
+            cell.textLabel.text=@"Test and calibrate triggers";
+            cell.accessibilityIdentifier=@"mcla.controls.triggerCalibration";
+            cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+            return cell;
+        }
         cell.textLabel.text = path.section == 2 ? @"Recenter tilt steering" : path.row == 0 ? @"Edit touch layout" : @"Reset touch layout";
         if (path.section == 1 && path.row == 0)
             cell.accessibilityIdentifier = @"mcla.controls.editTouchLayout";
@@ -519,6 +527,14 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 - (void)tableView:(UITableView*)tableView didSelectRowAtIndexPath:(NSIndexPath*)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
+    if(path.section==3) {
+        GCController* controller=nil;
+        for(GCController* candidate in GCController.controllers)
+            if(candidate.extendedGamepad && candidate.playerIndex==GCControllerPlayerIndex1) { controller=candidate;break; }
+        if(!controller) for(GCController* candidate in GCController.controllers)
+            if(candidate.extendedGamepad) { controller=candidate;break; }
+        [self.navigationController pushViewController:MCLACreateTriggerSettings(controller) animated:YES];
+    }
     if (path.section == 2 && self.onCalibrate) self.onCalibrate();
     if (path.section == 1 && path.row == 0 && self.onEditLayout) self.onEditLayout();
     if (path.section == 1 && path.row == 1) {
@@ -2730,13 +2746,13 @@ static void MCLARegisterGraphicsDefaults(void) {
         settings[key] = [NSUserDefaults.standardUserDefaults objectForKey:key] ?: @"unset";
     NSString* report = [NSString stringWithFormat:
         @"MCLA diagnostic export\nDate: %@\nVersion: %@ (%@)\nDevice: %s\niOS: %@\n"
-         "Runtime: %s\nFailed: %d  Finished: %d  Entry reached: %d\nLaunch error: %@\nSettings: %@\n\n"
+         "Runtime: %s\nFailed: %d  Finished: %d  Entry reached: %d\nLaunch error: %@\nSettings: %@\n\nController triggers (current process): %@\n\n"
          "Metal: presenter=%d, testPipeline=%d, drawable=%ux%u, submitted=%llu, completed=%llu\nMetal detail: %s\n\n"
          "Includes existing runtime logs and diagnostic text captures.\n"
          "For detailed startup logs, turn Graphics > Retail Mode off, reopen MCLA and reproduce the issue.\n",
         NSDate.date, info[@"CFBundleShortVersionString"], info[@"CFBundleVersion"],
         hardware.machine, UIDevice.currentDevice.systemVersion, runtime.detail,
-        runtime.failed, runtime.finished, runtime.entryReached, self.launchError ?: @"none", settings,
+        runtime.failed, runtime.finished, runtime.entryReached, self.launchError ?: @"none", settings, MCLAControllerTriggerDiagnostics(),
          graphics.metalPresenterReady, graphics.diagnosticPipelineReady,
          graphics.drawableWidth, graphics.drawableHeight,
          (unsigned long long)graphics.submittedFrames,

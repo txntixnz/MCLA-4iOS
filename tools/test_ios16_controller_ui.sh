@@ -19,7 +19,7 @@ xcrun --sdk iphonesimulator clang++ -std=c++20 -target "$target" -fobjc-arc -fbl
     tools/launcher_preview/runtime_stubs.mm MCLAApp/ios/MCLAViewController.mm \
     MCLAApp/ios/MCLALauncherView.mm MCLAApp/ios/MCLALauncherSceneView.mm \
     MCLAApp/ios/MCLASaveArchive.mm MCLAApp/ios/MCLALogArchive.mm \
-    MCLAApp/ios/MCLAGameInput.mm "$out/iso.o" \
+    MCLAApp/ios/MCLAGameInput.mm MCLAApp/ios/MCLAControllerTriggers.mm "$out/iso.o" \
     -framework UIKit -framework SceneKit -framework Foundation -framework QuartzCore \
     -framework CoreGraphics -framework MetalKit -framework Metal -framework CoreMotion \
     -framework GameController -framework UniformTypeIdentifiers -lz -o "$app/LauncherPreview"
@@ -53,4 +53,5 @@ result=documents/'controller-ui-result.txt'
 assert result.exists() and 'MCLA_CONTROLLER_UI_TEST PASS' in result.read_text(),'Controller UI regression did not pass'
 print(result.read_text())
 shutil.copyfile(documents/'xbox-touch-layout.png',out/'xbox-touch-layout.png')
+shutil.copyfile(documents/'controller-triggers.png',out/'controller-triggers.png')
 PYTHON
