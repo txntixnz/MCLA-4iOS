@@ -38,3 +38,14 @@ this change does not claim to resolve shader gaps or GPU recovery.
 
 Apple pressure-value contract:
 https://developer.apple.com/documentation/gamecontroller/gccontrollerbuttoninput/value
+
+## Completed validation
+
+Final source d759b29a4f054d3dfb1131b4a55358fbf8883604 passed the real UIKit /
+GameController snapshot suite and ARM64/iOS16 launcher build (run39032072741).
+Full native build and strict Apple signature verification passed privately
+(run39032085628), followed by independent verification of all604 original Metal
+library hashes,13 strong graphics hooks, bundle/profile/build19 and new feature
+markers in the packaged executable. The Xbox touch-layout capture is
+byte-identical to Stage18. The new trigger screen was visually inspected.
+Physical-controller calibration and gameplay remain pending user testing.
