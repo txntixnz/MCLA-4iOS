@@ -146,8 +146,10 @@ static UIViewController* TestTriggerCalibration(void) {
     for(UIView* control in [[self valueForKey:@"layoutControls"] allValues]) {
         BOOL hasRemoval=NO;
         for(UIGestureRecognizer* gesture in control.gestureRecognizers) {
-            if([gesture isKindOfClass:UITapGestureRecognizer.class]) {
+            if(![gesture.name hasPrefix:@"mcla.layout."]) continue;
+            if([gesture.name isEqual:@"mcla.layout.remove"]) {
                 hasRemoval=YES;
+                assert([gesture isKindOfClass:UITapGestureRecognizer.class]);
                 assert(((UITapGestureRecognizer*)gesture).numberOfTapsRequired==2);
                 assert(!gesture.delaysTouchesEnded);
             }

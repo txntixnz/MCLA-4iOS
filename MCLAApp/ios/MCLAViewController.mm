@@ -1374,12 +1374,14 @@ static void MCLARegisterGraphicsDefaults(void) {
     if (deviceSize) self.layoutDefaultSizes[key] = deviceSize;
     UIPanGestureRecognizer* pan = [[UIPanGestureRecognizer alloc]
         initWithTarget:self action:@selector(dragTouchControl:)];
+    pan.name = @"mcla.layout.move";
     pan.maximumNumberOfTouches = 1;
     pan.delegate=self;
     pan.enabled = NO;
     [control addGestureRecognizer:pan];
     UITapGestureRecognizer* remove = [[UITapGestureRecognizer alloc]
         initWithTarget:self action:@selector(returnControlToPalette:)];
+    remove.name = @"mcla.layout.remove";
     remove.numberOfTapsRequired = 2;
     remove.cancelsTouchesInView = YES;
     // Waiting for the editor's second tap prolongs a gameplay button hold,
@@ -1846,9 +1848,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     }
     for (UIView* control in self.layoutControls.allValues) {
         for (UIGestureRecognizer* recognizer in control.gestureRecognizers)
-            if ([recognizer isKindOfClass:UIPanGestureRecognizer.class] ||
-                [recognizer isKindOfClass:UIPinchGestureRecognizer.class] ||
-                [recognizer isKindOfClass:UITapGestureRecognizer.class])
+            if ([recognizer.name hasPrefix:@"mcla.layout."])
                 recognizer.enabled = self.editingTouchLayout;
         control.layer.borderColor = self.editingTouchLayout
             ? UIColor.systemCyanColor.CGColor
@@ -2059,9 +2059,7 @@ static void MCLARegisterGraphicsDefaults(void) {
         [self setNeedsUpdateOfSupportedInterfaceOrientations];
         for (UIView* control in self.layoutControls.allValues) {
             for (UIGestureRecognizer* recognizer in control.gestureRecognizers)
-                if ([recognizer isKindOfClass:UIPanGestureRecognizer.class] ||
-                    [recognizer isKindOfClass:UIPinchGestureRecognizer.class] ||
-                    [recognizer isKindOfClass:UITapGestureRecognizer.class])
+                if ([recognizer.name hasPrefix:@"mcla.layout."])
                     recognizer.enabled = NO;
             control.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.40].CGColor;
         }
