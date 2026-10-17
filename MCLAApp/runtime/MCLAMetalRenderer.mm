@@ -9,6 +9,7 @@
 #include "MCLAGeometryScratch.h"
 #include "MCLAVertexFixup.h"
 #include "MCLAVertexBounds.h"
+#include "MCLAGPURecovery.h"
 #include "MCLAActiveVertexStreams.h"
 #include "MCLAVertexConversionRecipe.h"
 #include "MCLAPackedTexture.h"
@@ -40,6 +41,8 @@
 #include "native_frame_scheduling.h"
 #include "native_shader_booleans.h"
 #import <Metal/Metal.h>
+#import <UIKit/UIKit.h>
+#include <cstdio>
 #import <QuartzCore/CAMetalLayer.h>
 #include <algorithm>
 #include <array>
@@ -654,6 +657,14 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   std::map<std::string,uint64_t> failuresByReason_;
   std::unordered_map<uint32_t, uint64_t> invalidResolveFormats_;
   std::atomic<uint64_t> completed_{0}, gpuErrors_{0};
+  mcla::metal::GPURecovery gpuRecovery_;
+  std::atomic<bool> gpuStopReported_{false};
+  uint64_t gpuRecoveries_ = 0;
+  static constexpr size_t kShaderWords = (std::size(kMCLAMetalShaders)+63)/64;
+  std::array<uint64_t,kShaderWords> frameShaderBits_{};
+  std::array<std::array<uint64_t,2>,8> encoderPairs_{};
+  std::array<uint64_t,2> encoderLastPair_{};
+  unsigned encoderPairCount_ = 0, encoderDraws_ = 0;
   double epoch_ = 0;
   double lastPresentSubmitTime_ = 0;
   double frameSlotWaitMS_ = 0, frameCommandMS_ = 0;
@@ -725,13 +736,83 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     }
     return nullptr;
   }
+  void ReportGPUStop() {
+    if (gpuStopReported_.exchange(true)) return;
+    REXLOG_ERROR("MCLA METAL rendering stopped: GPU access lost or recovery drain failed; restart the app");
+    dispatch_async(dispatch_get_main_queue(), ^{
+      UIViewController* controller = nil;
+      for (UIScene* scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow* window in ((UIWindowScene*)scene).windows)
+          if (window.isKeyWindow) { controller=window.rootViewController; break; }
+        if (controller) break;
+      }
+      while (controller.presentedViewController) controller=controller.presentedViewController;
+      if (!controller || controller.isBeingDismissed) return;
+      auto alert=[UIAlertController alertControllerWithTitle:@"Graphics stopped"
+          message:@"Graphics could not recover. Close MCLA from the app switcher, then reopen it."
+          preferredStyle:UIAlertControllerStyleAlert];
+      [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+      [controller presentViewController:alert animated:YES completion:nil];
+    });
+  }
+  void DiscardUnsubmittedFrame() {
+    EndEncoder();
+    if (!commands_) return;
+    commands_ = nil;
+    gpuPassTrace_.reset();
+    // Begin owns one token until either commit completion or this discard.
+    dispatch_semaphore_signal(flights_[slot_].available);
+  }
+  bool RecoverGPU() {
+    if (!gpuRecovery_.Start()) return !gpuRecovery_.Terminal();
+    REXLOG_WARN("MCLA METAL recovery begin frame={} errors={}",frames_+1,gpuErrors_.load());
+    const auto deadline=dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC);
+    unsigned drained=0;
+    for (;drained<kFlights;++drained)
+      if (dispatch_semaphore_wait(flights_[drained].available,deadline)) break;
+    if (drained!=kFlights || gpuRecovery_.Terminal()) {
+      for(unsigned i=0;i<drained;++i)dispatch_semaphore_signal(flights_[i].available);
+      gpuRecovery_.Fail(); ReportGPUStop(); return false;
+    }
+    // Every flight is complete. Rebuild mutable outputs from a clean state.
+    EndEncoder();
+    attachmentReuse_={}; colors_={}; depth_=nil;
+    drawSurfaces_={}; drawDepthSurface_={};
+    textureBindings_={}; textureGroup_={};
+    textures_.clear(); surfaces_.clear();
+    dynamicVertexUploads_.clear(); dynamicIndexUploads_.clear();
+    vertexReuse_={}; lastIndexKey_.Reset(); lastIndexUpload_={};
+    lastIndexVertices_={}; lastIndexCount_=0;
+    lastPipelineKey_.Reset(); preparedDepthKey_.Reset();
+    for(auto& bank:constantBanks_) { bank.snapshot.Reset(); bank.upload={}; }
+    sharedConstantsSnapshot_.Reset(); sharedConstantsUpload_={};
+    for(auto& flight:flights_) { flight.blocks.clear(); flight.block=flight.offset=0; flight.counters=nil; }
+    gpuPassTrace_.reset();
+    ++textureBindingSerial_; ++resourceRevision_;
+    queue_=[device_ newCommandQueue];
+    if (!queue_) gpuRecovery_.Fail();
+    const bool recovered=queue_ && gpuRecovery_.Finish();
+    for(auto& flight:flights_) dispatch_semaphore_signal(flight.available);
+    if (!recovered) { ReportGPUStop(); return false; }
+    ++gpuRecoveries_;
+    presentationClock_={};
+    REXLOG_INFO("MCLA METAL recovery complete frame={} recoveries={} flights=3 outputs=reset uploads=reset",frames_+1,gpuRecoveries_);
+    return true;
+  }
   bool Begin() {
+    if (gpuRecovery_.Terminal()) return false;
     if (commands_)
       return true;
     auto &f = flights_[slot_];
     const double waitStart = CACurrentMediaTime();
     dispatch_semaphore_wait(f.available, DISPATCH_TIME_FOREVER);
     frameSlotWaitMS_ += (CACurrentMediaTime() - waitStart) * 1000;
+    // Recovery runs at a command boundary, never inside Target/Attach.
+    if (gpuRecovery_.Get()!=mcla::metal::GPURecovery::State::Ready) {
+      dispatch_semaphore_signal(f.available); return false;
+    }
+    frameShaderBits_={};
     f.block = 0;
     f.offset = 0;
     dynamicVertexUploads_.clear();
@@ -767,6 +848,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       const char* kind,bool guest=false) {
     if(gpuPassTrace_)gpuPassTrace_->Render(pass,kind,guest);
     auto encoder = [commands_ renderCommandEncoderWithDescriptor:pass];
+    encoderDraws_=encoderPairCount_=0; encoderLastPair_={};
     if (commands_.errorOptions != MTLCommandBufferErrorOptionNone) {
       auto texture = pass.colorAttachments[0].texture ?: pass.depthAttachment.texture;
       encoder.label = [NSString stringWithFormat:@"%s %lux%lu initial_vs=%016llX initial_ps=%016llX",
@@ -789,6 +871,15 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   void EndEncoder() {
     if (encoder_) {
+      if (encoderDraws_ && commands_.errorOptions!=MTLCommandBufferErrorOptionNone) {
+        char pairs[400]{}; size_t used=0;
+        for(unsigned i=0;i<encoderPairCount_;++i)
+          used+=size_t(std::snprintf(pairs+used,sizeof(pairs)-used,"%016llX/%016llX,",
+              (unsigned long long)encoderPairs_[i][0],(unsigned long long)encoderPairs_[i][1]));
+        encoder_.label=[NSString stringWithFormat:@"%@ draws=%u pairs=%s last=%016llX/%016llX",
+            encoder_.label ?: @"guest",encoderDraws_,pairs,
+            (unsigned long long)encoderLastPair_[0],(unsigned long long)encoderLastPair_[1]];
+      }
       [encoder_ endEncoding];
       encoder_ = nil;
     }
@@ -2779,6 +2870,17 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           [encoder_ drawPrimitives:type vertexStart:start+slice.first vertexCount:slice.count];
     }
     ++draws_;
+    if (mcla::DiagnosticsEnabled()) {
+      for(const auto* info : {vs->info, ps ? ps->info : nullptr}) if(info) {
+        const size_t index=size_t(info-kMCLAMetalShaders);
+        if(index<std::size(kMCLAMetalShaders))frameShaderBits_[index/64]|=uint64_t(1)<<(index%64);
+      }
+      ++encoderDraws_;
+      encoderLastPair_={vs->info->hash,ps?ps->info->hash:0};
+      if(encoderPairCount_<encoderPairs_.size() &&
+          std::find(encoderPairs_.begin(),encoderPairs_.begin()+encoderPairCount_,encoderLastPair_)==encoderPairs_.begin()+encoderPairCount_)
+        encoderPairs_[encoderPairCount_++]=encoderLastPair_;
+    }
     if(gpuPassTrace_)gpuPassTrace_->Draw(vs->info->hash,ps?ps->info->hash:0);
     mark(5);if(sample){++profileSamples_;++frameProfileSamples_;}
     CapturePixelHistory(state, ps ? ps->info->hash : 0,
@@ -3369,6 +3471,12 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     return true;
   }
   bool Present(const ng::PresentCommand &c) {
+    if (gpuRecovery_.Get()==mcla::metal::GPURecovery::State::Pending) {
+      DiscardUnsubmittedFrame();
+      const bool recovered=RecoverGPU();
+      MCLAGraphicsNoteMetalCompletion(false);
+      return recovered;
+    }
     // Snapshot once: a UIKit toggle cannot split a frame between modes.
     frameFSREnabled_=MCLAGraphicsFSREnabled();
     const double presentStart = CACurrentMediaTime();
@@ -3435,6 +3543,13 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         }
       }];
       [commands_ presentDrawable:drawable atTime:presentationClock_.Plan(CACurrentMediaTime(), MCLAGraphicsFrameRate())];
+    }
+    if (gpuRecovery_.Get()!=mcla::metal::GPURecovery::State::Ready) {
+      DiscardUnsubmittedFrame();
+      const bool recovered=gpuRecovery_.Terminal() ? false : RecoverGPU();
+      if (!recovered) ReportGPUStop();
+      MCLAGraphicsNoteMetalCompletion(false);
+      return recovered;
     }
     const uint64_t frame = ++frames_, draws = draws_, failed = failed_,
                    resolves = resolves_;
@@ -3527,15 +3642,27 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     // registration. Captured by value, it outlives this CPU stack frame.
     auto commitTime = std::make_shared<double>(0);
     auto passTrace=gpuPassTrace_;
+    const auto shaderBits=frameShaderBits_;
     [commands_ addCompletedHandler:^(id<MTLCommandBuffer> cb) {
       self->completed_.fetch_add(1);
       if (cb.status == MTLCommandBufferStatusError) {
+        const bool revoked=[cb.error.domain isEqualToString:MTLCommandBufferErrorDomain] &&
+            cb.error.code==MTLCommandBufferErrorBlacklisted;
+        self->gpuRecovery_.Error(revoked);
+        if (revoked) self->ReportGPUStop();
         const auto errors = self->gpuErrors_.fetch_add(1)+1;
-        REXLOG_ERROR("MCLA METAL GPU error: frame={} domain={} code={} active_at_completion={} thermal={}: {}",
+        if(errors<=8 || errors%120==0) REXLOG_ERROR("MCLA METAL GPU error: frame={} domain={} code={} active_at_completion={} thermal={}: {}",
             frame,cb.error.domain.UTF8String,long(cb.error.code),
             MCLAGraphicsApplicationActive(),int(NSProcessInfo.processInfo.thermalState),
             cb.error.localizedDescription.UTF8String);
         if (errors <= 8) {
+          std::string shaders;
+          for(size_t i=0;i<std::size(kMCLAMetalShaders);++i) if(shaderBits[i/64]&(uint64_t(1)<<(i%64))) {
+            char name[24]; std::snprintf(name,sizeof(name),"%s-%016llX ",kMCLAMetalShaders[i].vertex?"vs":"ps",(unsigned long long)kMCLAMetalShaders[i].hash);
+            shaders+=name;
+            if(shaders.size()>700) {REXLOG_ERROR("MCLA METAL GPU shaders frame={} {}",frame,shaders);shaders.clear();}
+          }
+          if(!shaders.empty()) REXLOG_ERROR("MCLA METAL GPU shaders frame={} {}",frame,shaders);
           NSArray* records = cb.error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
           if ([records isKindOfClass:NSArray.class]) {
             unsigned reported = 0;
@@ -3851,6 +3978,11 @@ public:
   if (size != sizeof(ng::T))                                                   \
     return false;                                                              \
   const auto &c = *static_cast<const ng::T *>(command)
+      if (gpuRecovery_.Terminal()) {
+        DiscardUnsubmittedFrame(); ReportGPUStop(); return false;
+      }
+      if (!commands_ && gpuRecovery_.Get()==mcla::metal::GPURecovery::State::Pending &&
+          !RecoverGPU()) return false;
       switch (h->type) {
       case ng::CommandType::kRegisterShader: {
         CMD(RegisterShaderCommand);
@@ -3958,6 +4090,8 @@ public:
     }
   }
   void Shutdown() override {
+    if (gpuRecovery_.Get()!=mcla::metal::GPURecovery::State::Ready)
+      DiscardUnsubmittedFrame();
     EndEncoder();
     if (commands_) {
       auto sem = flights_[slot_].available;
