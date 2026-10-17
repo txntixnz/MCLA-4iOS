@@ -196,4 +196,7 @@ uint16_t MCLAControlPreviewButtons();
     self.studyCaption.frame=CGRectMake(left+300*scale,top+20*scale,680*scale,20*scale);
 }
 @end
-UIViewController* MCLACreateLauncherTestController(void) { return [[ControlPreviewController alloc] init]; }
+UIViewController* MCLACreateLauncherTestController(void) {
+    [NSUserDefaults.standardUserDefaults setBool:NO forKey:@"MCLAXboxTouchLayoutEnabled"];
+    return [[ControlPreviewController alloc] init];
+}

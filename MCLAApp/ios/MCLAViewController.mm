@@ -23,6 +23,8 @@
 #import "MCLAControlArtwork.h"
 #import "MCLASlidingControls.h"
 #import "MCLAControlResizeGesture.h"
+#include "MCLAXboxTouchLayout.h"
+#include "MCLAControllerInput.h"
 
 
 // Version 1.0 enables the redesigned controls and HUD by default. Retain the
@@ -32,7 +34,18 @@ static BOOL MCLAControlOverhaulEnabled(void) {
     return override ? override.boolValue :
         [NSUserDefaults.standardUserDefaults boolForKey:@"MCLAControlOverhaulTestEnabled"];
 }
+static BOOL MCLAXboxTouchLayoutEnabled(void) {
+    return [NSUserDefaults.standardUserDefaults boolForKey:@"MCLAXboxTouchLayoutEnabled"];
+}
+static BOOL MCLAUseDrivingTouchOverhaul(void) {
+    return MCLAControlOverhaulEnabled() && !MCLAXboxTouchLayoutEnabled();
+}
+static NSArray* MCLAXboxTouchControls(void) {
+    return @[@"handbrake",@"weight",@"nitro",@"headlights",@"ability",@"camera",
+        @"gps",@"pause",@"hud",@"hydraulics",@"track_left",@"track_right",@"info",@"horn"];
+}
 static NSString* MCLATouchPreference(NSString* key) {
+    if(MCLAXboxTouchLayoutEnabled()) return [key stringByAppendingString:@"Xbox"];
     return MCLAControlOverhaulEnabled() ? [key stringByAppendingString:@"Overhaul"] : key;
 }
 static NSDictionary* MCLAOverhaulPositions(void) {
@@ -146,6 +159,8 @@ static void MCLARegisterGraphicsDefaults(void) {
         @"MCLAExperimental60FPS": @NO,
         @"MCLASkipIntro": @YES,
         @"MCLATouchEnabledControlOverhaulTest": @YES,
+        @"MCLAXboxTouchLayoutEnabled": @YES,
+        @"MCLATouchActiveControlsXbox": MCLAXboxTouchControls(),
         @"MCLATiltEnabled": @NO,
         @"MCLATiltInvert": @NO,
         @"MCLATouchActiveControls": MCLADefaultTouchControls(),
@@ -349,6 +364,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 @property(nonatomic, strong) UIImageView* baseArtwork;
 @property(nonatomic, strong) UILabel* caption;
 @property(nonatomic, weak) UITouch* trackedTouch;
+- (void)reset;
 @end
 
 @implementation MCLAVirtualStickView
@@ -420,6 +436,9 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 - (void)releaseTouches:(NSSet<UITouch*>*)touches {
     if (!self.trackedTouch || ![touches containsObject:self.trackedTouch]) return;
+    [self reset];
+}
+- (void)reset {
     self.trackedTouch = nil;
     self.thumb.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
     if (self.onStick) self.onStick(0, 0, NO);
@@ -453,7 +472,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 - (void)done:(id)sender { (void)sender; [self dismissViewControllerAnimated:YES completion:nil]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView*)tableView { (void)tableView; return 2; }
 - (NSInteger)tableView:(UITableView*)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return section == 0 ? 5 : 2;
+    (void)tableView; return section == 0 ? 6 : 2;
 }
 - (NSString*)tableView:(UITableView*)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return section == 0 ? @"On-Screen Pad" : @"Steering Setup";
@@ -461,7 +480,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 - (NSString*)tableView:(UITableView*)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     return section == 0
-        ? @"The translucent driving controls can be dragged into place with EDIT during gameplay. Positions are saved automatically. Tilt replaces left-stick steering; hold the iPad upright and turn it like a wheel. PAD has every Xbox 360 control."
+        ? @"Touch controls hide automatically when a supported controller connects, and return when it disconnects. Xbox layout uses both sticks, ABXY, D-pad and shoulders. EDIT saves a separate layout. Tilt replaces left-stick steering. PAD opens the control palette."
         : @"Recenter with the iPad in your comfortable straight-ahead driving position. Use Invert if left and right feel reversed.";
 }
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)path {
@@ -474,9 +493,9 @@ static void MCLARegisterGraphicsDefaults(void) {
         return cell;
     }
     NSArray<NSString*>* names = @[@"Touch driving controls", @"Tilt steering",
-                                  @"Invert tilt direction", @"Show full pad at launch", @"Experimental control overhaul"];
+                                  @"Invert tilt direction", @"Show full pad at launch", @"Raised driving HUD", @"Xbox controller layout"];
     NSArray<NSString*>* keys = @[@"MCLATouchEnabledControlOverhaulTest", @"MCLATiltEnabled",
-                                 @"MCLATiltInvert", @"MCLAFullPadVisible", @"MCLAControlOverhaulTestEnabled"];
+                                 @"MCLATiltInvert", @"MCLAFullPadVisible", @"MCLAControlOverhaulTestEnabled", @"MCLAXboxTouchLayoutEnabled"];
     cell.textLabel.text = names[path.row];
     UISwitch* toggle = [[UISwitch alloc] init];
     toggle.tag = path.row;
@@ -488,7 +507,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 - (void)toggleChanged:(UISwitch*)sender {
     NSArray<NSString*>* keys = @[@"MCLATouchEnabledControlOverhaulTest", @"MCLATiltEnabled",
-                                 @"MCLATiltInvert", @"MCLAFullPadVisible", @"MCLAControlOverhaulTestEnabled"];
+                                 @"MCLATiltInvert", @"MCLAFullPadVisible", @"MCLAControlOverhaulTestEnabled", @"MCLAXboxTouchLayoutEnabled"];
     [NSUserDefaults.standardUserDefaults setBool:sender.on forKey:keys[sender.tag]];
     if (sender.tag == 4) MCLAResetVirtualGamepad();
     [NSUserDefaults.standardUserDefaults synchronize];
@@ -892,6 +911,9 @@ static void MCLARegisterGraphicsDefaults(void) {
 @property(nonatomic, assign) BOOL overhaulHandbrakeHeld;
 @property(nonatomic, assign) BOOL overhaulWasEnabled;
 @property(nonatomic, strong) MCLAVirtualStickView* steeringStick;
+@property(nonatomic, strong) MCLAVirtualStickView* xboxCameraStick;
+@property(nonatomic, assign) BOOL xboxWasEnabled;
+@property(nonatomic, assign) BOOL physicalControllerConnected;
 @property(nonatomic, strong) MCLAVirtualStickView* cameraStick;
 @property(nonatomic, strong) NSArray<UIButton*>* pedals;
 @property(nonatomic, strong) NSArray<UIButton*>* drivingActions;
@@ -1128,6 +1150,9 @@ static void MCLARegisterGraphicsDefaults(void) {
         selector:@selector(appDidBecomeActive:) name:UIApplicationDidBecomeActiveNotification
         object:nil];
 
+    for(NSNotificationName name in @[GCControllerDidConnectNotification,GCControllerDidDisconnectNotification])
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(controllerConnectionChanged:)
+            name:name object:nil];
     [self refreshBringupStatus];
     self.statusTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
         target:self selector:@selector(refreshBringupStatus)
@@ -1328,12 +1353,19 @@ static void MCLARegisterGraphicsDefaults(void) {
     self.steeringStick = [[MCLAVirtualStickView alloc] initWithTitle:@"STEER · LEFT STICK"];
     __weak MCLAViewController* weakSelf = self;
     self.steeringStick.onStick = ^(float x, float y, BOOL active) {
-        if (weakSelf.editingTouchLayout) return;
+        if (weakSelf.editingTouchLayout || !weakSelf.touchInputActive) return;
         MCLASetVirtualGamepadLeftStick(x, y, active);
     };
     self.steeringStick.layer.cornerRadius = 86;
     [self registerMovableControl:self.steeringStick key:@"steer"
                               x:0.15 y:0.72 width:172 height:172];
+    self.xboxCameraStick=[[MCLAVirtualStickView alloc] initWithTitle:@"RIGHT STICK · LOOK"];
+    self.xboxCameraStick.onStick=^(float x,float y,BOOL active) {
+        if(!weakSelf.touchInputActive || weakSelf.editingTouchLayout) return;
+        MCLASetVirtualGamepadRightStick(x,y,active);
+    };
+    [self registerMovableControl:self.xboxCameraStick key:@"look"
+                              x:.73 y:.82 width:172 height:172];
 
     UIButton* gas = [self makePedal:@"GAS\nRT" right:YES];
     UIButton* brake = [self makePedal:@"BRAKE\nLT" right:NO];
@@ -1439,6 +1471,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     self.cameraStick = [[MCLAVirtualStickView alloc] initWithTitle:@"RIGHT STICK · LOOK"];
     self.cameraStick.translatesAutoresizingMaskIntoConstraints = NO;
     self.cameraStick.onStick = ^(float x, float y, BOOL active) {
+        if(!weakSelf.touchInputActive || weakSelf.editingTouchLayout) return;
         MCLASetVirtualGamepadRightStick(x, y, active);
     };
     UIView* cameraRow = [[UIView alloc] init];
@@ -1473,6 +1506,7 @@ static void MCLARegisterGraphicsDefaults(void) {
         [self.cameraStick.heightAnchor constraintEqualToConstant:112],
     ]];
     self.steeringStick.hidden = YES;
+    self.xboxCameraStick.hidden=YES;
     for (UIButton* pedal in self.pedals) pedal.hidden = YES;
     for (UIButton* action in self.drivingActions) action.hidden = YES;
     self.fullPadPanel.hidden = YES;
@@ -1489,7 +1523,12 @@ static void MCLARegisterGraphicsDefaults(void) {
     if ([position isKindOfClass:NSArray.class] && position.count == 2 &&
         [position[0] isKindOfClass:NSNumber.class] &&
         [position[1] isKindOfClass:NSNumber.class]) return position;
-    if(MCLAControlOverhaulEnabled() && [key isEqual:@"handbrake"] && !saved[@"gas"] && !saved[@"handbrake"]) {
+    if(MCLAXboxTouchLayoutEnabled()) {
+        CGRect safe=[self touchSafeRect];
+        auto frame=mcla::touch::XboxControlFrame(key.UTF8String,safe.size.width,safe.size.height);
+        if(frame) return @[@(frame->x/safe.size.width),@(frame->y/safe.size.height)];
+    }
+    if(MCLAUseDrivingTouchOverhaul() && [key isEqual:@"handbrake"] && !saved[@"gas"] && !saved[@"handbrake"]) {
         CGRect safe=[self touchSafeRect];
         if(safe.size.height>0) {
             NSArray<NSNumber*>* gasSize=[self touchSizeForKey:@"gas"];
@@ -1510,7 +1549,12 @@ static void MCLARegisterGraphicsDefaults(void) {
     if ([size isKindOfClass:NSArray.class] && size.count == 2 &&
         [size[0] isKindOfClass:NSNumber.class] &&
         [size[1] isKindOfClass:NSNumber.class]) return size;
-    if (MCLAControlOverhaulEnabled()) {
+    if(MCLAXboxTouchLayoutEnabled()) {
+        CGRect safe=[self touchSafeRect];
+        auto frame=mcla::touch::XboxControlFrame(key.UTF8String,safe.size.width,safe.size.height);
+        if(frame) return @[@(frame->width),@(frame->height)];
+    }
+    if (MCLAUseDrivingTouchOverhaul()) {
         NSArray<NSNumber*>* authored=MCLAOverhaulSizes()[key];
         if (authored) {
             CGRect safe=[self touchSafeRect];
@@ -1537,7 +1581,21 @@ static void MCLARegisterGraphicsDefaults(void) {
         @"gps":@"MAP VIEW",@"hud":@"MAP",@"headlights":@"LIGHTS",@"weight":@"WEIGHT",
         @"hydraulics":@"HYD",@"track_left":@"TRACK",@"track_right":@"TRACK",@"info":@"INFO",
         @"horn":@"HORN",@"guide":@"GUIDE"};
-    BOOL combined=MCLAControlOverhaulEnabled() && [key isEqual:@"handbrake"] &&
+    if(MCLAXboxTouchLayoutEnabled()) {
+        NSDictionary* symbols=@{@"handbrake":@"A",@"weight":@"B",@"nitro":@"X",@"headlights":@"Y",
+            @"ability":@"LB",@"camera":@"RB",@"brake":@"LT",@"gas":@"RT",@"gps":@"VIEW",
+            @"pause":@"MENU",@"hud":@"UP",@"hydraulics":@"DOWN",@"track_left":@"LEFT",
+            @"track_right":@"RIGHT",@"info":@"L3",@"horn":@"R3"};
+        NSString* symbol=symbols[key];
+        if(symbol) {
+            MCLAStaticTouchButton* button=(MCLAStaticTouchButton*)control;
+            button.accessibilityLabel=[NSString stringWithFormat:@"%@ · %@",symbol,labels[key] ?: key];
+            [button configureArtwork:[@"xbox_" stringByAppendingString:symbol]
+                label:@"" segment:0];
+            return;
+        }
+    }
+    BOOL combined=MCLAUseDrivingTouchOverhaul() && [key isEqual:@"handbrake"] &&
         [control.accessibilityIdentifier hasPrefix:@"mcla.touch."];
     NSString* artKey=combined ? @"gas_handbrake" : key;
     NSString* label=combined ? @"GAS +\nHANDBRAKE" : labels[key] ?: key.uppercaseString;
@@ -1545,7 +1603,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     // while aligned; rearranged zones get their own complete rounded outline.
     NSInteger segment=0;
     UIView* gas=self.layoutControls[@"gas"], *drift=self.layoutControls[@"handbrake"];
-    BOOL docked=MCLAControlOverhaulEnabled() && [self isTouchControlDeployed:@"handbrake"] && gas && drift &&
+    BOOL docked=MCLAUseDrivingTouchOverhaul() && [self isTouchControlDeployed:@"handbrake"] && gas && drift &&
         fabs(CGRectGetMidX(gas.frame)-CGRectGetMidX(drift.frame))<3 &&
         fabs(gas.bounds.size.width-drift.bounds.size.width)<3 &&
         fabs(CGRectGetMaxY(gas.frame)-CGRectGetMinY(drift.frame))<12;
@@ -1562,7 +1620,10 @@ static void MCLARegisterGraphicsDefaults(void) {
     for (NSString* key in self.layoutControls) {
         UIView* control = self.layoutControls[key];
         NSArray<NSNumber*>* defaultSize = self.layoutDefaultSizes[key];
-        if (MCLAControlOverhaulEnabled()) {
+        if(MCLAXboxTouchLayoutEnabled()) {
+            auto frame=mcla::touch::XboxControlFrame(key.UTF8String,safe.size.width,safe.size.height);
+            if(frame) defaultSize=@[@(frame->width),@(frame->height)];
+        } else if (MCLAControlOverhaulEnabled()) {
             NSArray<NSNumber*>* authored=MCLAOverhaulSizes()[key];
             CGFloat scale=MIN(safe.size.width/1280.0,safe.size.height/720.0);
             if (authored) defaultSize=@[@(authored[0].doubleValue*scale),@(authored[1].doubleValue*scale)];
@@ -1615,7 +1676,11 @@ static void MCLARegisterGraphicsDefaults(void) {
         dictionaryForKey:MCLATouchPreference(@"MCLATouchLayoutSizes")] mutableCopy] ?: [NSMutableDictionary dictionary];
     CGRect safe=[self touchSafeRect];
     CGFloat authoredScale=MIN(safe.size.width/1280.0,safe.size.height/720.0);
-    NSArray* authored=MCLAControlOverhaulEnabled() ? MCLAOverhaulSizes()[key] : nil;
+    NSArray* authored=MCLAUseDrivingTouchOverhaul() ? MCLAOverhaulSizes()[key] : nil;
+    if(MCLAXboxTouchLayoutEnabled()) {
+        auto frame=mcla::touch::XboxControlFrame(key.UTF8String,safe.size.width,safe.size.height);
+        if(frame) authored=@[@(frame->width/authoredScale),@(frame->height/authoredScale)];
+    }
     CGFloat baseWidth=authored ? [authored[0] doubleValue]*authoredScale : defaultSize[0].doubleValue;
     CGFloat baseHeight=authored ? [authored[1] doubleValue]*authoredScale : defaultSize[1].doubleValue;
     CGFloat factor=MIN(nextWidth/currentWidth,nextHeight/currentHeight);
@@ -1709,6 +1774,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 
 - (void)toggleTouchLayoutEditing:(id)sender {
     (void)sender;
+    if (self.physicalControllerConnected) return;
     if (![NSUserDefaults.standardUserDefaults boolForKey:@"MCLATouchEnabledControlOverhaulTest"]) {
         [self showControlsOptions:nil];
         return;
@@ -1735,7 +1801,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 - (void)resetTouchLayout {
     [NSUserDefaults.standardUserDefaults removeObjectForKey:MCLATouchPreference(@"MCLATouchLayoutPositions")];
     [NSUserDefaults.standardUserDefaults removeObjectForKey:MCLATouchPreference(@"MCLATouchLayoutSizes")];
-    [NSUserDefaults.standardUserDefaults setObject:(MCLAControlOverhaulEnabled() ? MCLAOverhaulControls() : MCLADefaultTouchControls())
+    [NSUserDefaults.standardUserDefaults setObject:(MCLAXboxTouchLayoutEnabled() ? MCLAXboxTouchControls() : MCLAControlOverhaulEnabled() ? MCLAOverhaulControls() : MCLADefaultTouchControls())
                                             forKey:MCLATouchPreference(@"MCLATouchActiveControls")];
     [NSUserDefaults.standardUserDefaults synchronize];
     [self applyTouchLayout];
@@ -1788,10 +1854,10 @@ static void MCLARegisterGraphicsDefaults(void) {
     MCLASetVirtualGamepadButton(MCLA_GAMEPAD_B,(self.directButtons & MCLA_GAMEPAD_B) || (self.slideInputs & 8));
 }
 - (void)gamepadButtonDown:(UIButton*)sender {
-    if (self.editingTouchLayout) return;
+    if (self.editingTouchLayout || !self.touchInputActive) return;
     self.directButtons |= (uint16_t)sender.tag;
     MCLASetVirtualGamepadButton((uint16_t)sender.tag, true);
-    if (MCLAControlOverhaulEnabled() && [sender.accessibilityIdentifier isEqual:@"mcla.touch.handbrake"])
+    if (MCLAUseDrivingTouchOverhaul() && [sender.accessibilityIdentifier isEqual:@"mcla.touch.handbrake"])
         self.overhaulHandbrakeHeld=YES;
     [self updateDrivingInputs];
 }
@@ -1803,7 +1869,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self updateDrivingInputs];
 }
 - (void)pedalDown:(UIButton*)sender {
-    if (self.editingTouchLayout) return;
+    if (self.editingTouchLayout || !self.touchInputActive) return;
     if (sender.tag==2) self.overhaulGasHeld=YES; else self.directBrakeHeld=YES;
     [self updateDrivingInputs];
 }
@@ -1878,20 +1944,36 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 
 - (void)refreshTouchInputForGameVisible:(BOOL)gameVisible {
-    if (self.overhaulWasEnabled != MCLAControlOverhaulEnabled()) {
+    const BOOL xbox=MCLAXboxTouchLayoutEnabled();
+    GCController* controller=[self connectedGameController];
+    const BOOL connected=controller!=nil;
+    if(connected!=self.physicalControllerConnected) {
+        self.physicalControllerConnected=connected;
+        self.controllerSampled=NO;
+        self.controllerDirection=0;
+        if(connected) [self hideGameplayToolbar];
+    }
+    [self.panel setControllerConnected:connected];
+    for(UIView* action in self.touchControls.arrangedSubviews)
+        if(([action isKindOfClass:UIButton.class] && action.tag!=0) || action==self.padButton || action==self.editButton)
+            action.hidden=connected;
+    if (self.overhaulWasEnabled != MCLAControlOverhaulEnabled() || self.xboxWasEnabled!=xbox) {
         MCLAResetVirtualGamepad();
         [self clearSlidingInputs];
         self.overhaulGasHeld=NO; self.overhaulHandbrakeHeld=NO;
         self.overhaulWasEnabled=MCLAControlOverhaulEnabled();
+        self.xboxWasEnabled=xbox;
+        [self.steeringStick reset]; [self.xboxCameraStick reset]; [self.cameraStick reset];
     }
 
     MCLAGraphicsSetVisualExperiments(7u | (MCLAControlOverhaulEnabled() ? 8u : 0u));
     [self applyTouchLayout];
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
-    const BOOL active = gameVisible &&
-        [defaults boolForKey:@"MCLATouchEnabledControlOverhaulTest"] &&
-        UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+    const BOOL active=mcla::input::TouchControlsActive(gameVisible,
+        UIApplication.sharedApplication.applicationState==UIApplicationStateActive,
+        [defaults boolForKey:@"MCLATouchEnabledControlOverhaulTest"],connected);
     if (!active && self.touchInputActive) {
+        [self.steeringStick reset]; [self.xboxCameraStick reset]; [self.cameraStick reset];
         MCLAResetVirtualGamepad();
         [self clearSlidingInputs];
         self.overhaulGasHeld=NO; self.overhaulHandbrakeHeld=NO;
@@ -1919,6 +2001,8 @@ static void MCLARegisterGraphicsDefaults(void) {
         [defaults boolForKey:@"MCLATiltEnabled"];
     self.steeringStick.hidden = !active || tiltConfigured;
     self.steeringStick.userInteractionEnabled = active && !tiltConfigured;
+    self.xboxCameraStick.hidden=!active || !xbox;
+    self.xboxCameraStick.userInteractionEnabled=active && xbox;
     if (tiltConfigured) MCLASetVirtualGamepadLeftStick(0.0f, 0.0f, false);
     for (UIButton* pedal in self.pedals) pedal.hidden = !active;
     [self.drivingActions enumerateObjectsUsingBlock:
@@ -1942,7 +2026,7 @@ static void MCLARegisterGraphicsDefaults(void) {
         };
         [self.view addSubview:self.slideControls];
     }
-    BOOL sliding=active && MCLAControlOverhaulEnabled() && !self.editingTouchLayout && !full;
+    BOOL sliding=active && MCLAUseDrivingTouchOverhaul() && !self.editingTouchLayout && !full;
     if (!sliding && !self.slideControls.hidden) [self.slideControls reset];
     self.slideControls.hidden=!sliding;
     self.slideControls.frame=self.view.bounds;
@@ -1987,6 +2071,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     MCLAGraphicsSetApplicationActive(false);
     MCLAResetVirtualGamepad();
     [self clearSlidingInputs];
+    [self refreshTouchInputForGameVisible:NO];
 }
 
 - (void)appDidEnterBackground:(NSNotification*)notification {
@@ -2281,11 +2366,31 @@ static void MCLARegisterGraphicsDefaults(void) {
     MCLASetVirtualGamepadButton(MCLA_GAMEPAD_A, false);
 }
 
+// Match the platform driver's user-zero-first routing and require the complete
+// extended profile. A micro remote cannot replace the driving touch controls.
+- (GCController*)connectedGameController {
+    NSArray<GCController*>* controllers=GCController.controllers;
+    for(GCController* controller in controllers)
+        if(controller.extendedGamepad && controller.playerIndex==GCControllerPlayerIndex1) return controller;
+    for(GCController* controller in controllers)
+        if(controller.extendedGamepad) return controller;
+    return nil;
+}
+- (void)controllerConnectionChanged:(NSNotification*)notification {
+    (void)notification;
+    if(!NSThread.isMainThread) {
+        __weak MCLAViewController* weakSelf=self;
+        dispatch_async(dispatch_get_main_queue(),^{ [weakSelf controllerConnectionChanged:nil]; });
+        return;
+    }
+    [self refreshTouchInputForGameVisible:self.gameVisible];
+}
+
 // Read the same controller snapshots as the game, without replacing the
 // runtime's handlers. This timer exists only while the launcher is visible.
 - (void)pollLauncherController {
     if (self.gameVisible || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
-    GCController* controller = GCController.current ?: GCController.controllers.firstObject;
+    GCController* controller = [self connectedGameController];
     [self.panel setControllerConnected:controller != nil];
     GCExtendedGamepad* pad = controller.extendedGamepad;
     GCMicroGamepad* micro = controller.microGamepad;

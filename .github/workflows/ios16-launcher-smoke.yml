@@ -9,6 +9,13 @@ on:
       - 'MCLAApp/runtime/MCLAGraphicsFoundation.h'
       - 'MCLAApp/runtime/MCLAGraphicsFoundation.mm'
       - 'MCLAApp/ios/MCLAViewController.mm'
+      - 'MCLAApp/ios/MCLAControlArtwork.h'
+      - 'MCLAApp/ios/MCLAXboxTouchLayout.h'
+      - 'MCLAApp/runtime/MCLAControllerInput.h'
+      - 'MCLAApp/runtime/MCLABootstrapSubsystems.cpp'
+      - 'tools/test_mcla_controller_input.cpp'
+      - 'tools/test_ios16_controller_ui.sh'
+      - 'tools/launcher_preview/**'
       - 'MCLAApp/ios/MCLAISOReader.h'
       - 'MCLAApp/ios/MCLAISOReader.cpp'
       - 'MCLAApp/ios/MCLALauncherView.h'
@@ -42,7 +49,7 @@ jobs:
           /tmp/mcla-library-test
       - name: Check full-screen overlays and authored HUD placement
         run: |
-          for name in visual_experiments control_overhaul metal_presentation; do
+          for name in controller_input visual_experiments control_overhaul metal_presentation; do
             xcrun clang++ -std=c++20 -O2 -fsanitize=undefined "tools/test_mcla_${name}.cpp" -o "/tmp/mcla-${name}"
             "/tmp/mcla-${name}"
           done
@@ -83,4 +90,27 @@ jobs:
           name: MCLA-iOS16-LAUNCHER-ONLY-NO-GAME
           path: output/MCLA-iOS16-LAUNCHER-ONLY-NO-GAME.ipa
           if-no-files-found: error
+          retention-days: 7
+
+  controller-ui:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Exercise production touch controls with simulated controller connection changes
+        run: |
+          mkdir -p out/controller-ui
+          bash tools/test_ios16_controller_ui.sh out/controller-ui > out/controller-ui/build.log 2>&1 || {
+            tail -n 180 out/controller-ui/build.log
+            exit 1
+          }
+          tail -n 35 out/controller-ui/build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MCLA-Controller-UI-Preview
+          path: |
+            out/controller-ui/*.log
+            out/controller-ui/*.png
+          if-no-files-found: warn
           retention-days: 7

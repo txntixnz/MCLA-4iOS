@@ -1,6 +1,8 @@
 #include "MCLABootstrapSubsystems.h"
 #include "MCLAAudioOutput.h"
 #include "MCLATouchInputMath.h"
+#include "MCLAControllerInput.h"
+#include "MCLAGraphicsFoundation.h"
 
 #include <algorithm>
 #include <array>
@@ -286,6 +288,7 @@ class MCLABootstrapInput final : public rex::system::IInputSystem {
     X_STATUS Setup() override {
         driver_ =
             std::make_unique<rex::input::ios::IOSInputDriver>(nullptr, 0);
+        driver_->set_is_active_callback([]{ return MCLAGraphicsApplicationActive(); });
         const X_STATUS status = driver_->Setup();
         if (status != X_STATUS_SUCCESS) {
             driver_.reset();
@@ -304,8 +307,9 @@ class MCLABootstrapInput final : public rex::system::IInputSystem {
         uint32_t userIndex, uint32_t flags,
         rex::input::X_INPUT_CAPABILITIES* outCapabilities) override {
         if (driver_) {
-            const X_RESULT result =
-                driver_->GetCapabilities(userIndex, flags, outCapabilities);
+            const X_RESULT result = PrimaryPad(userIndex,[&](uint32_t index){
+                return driver_->GetCapabilities(index,flags,outCapabilities);
+            });
             if (result != X_ERROR_DEVICE_NOT_CONNECTED) {
                 return result;
             }
@@ -332,7 +336,9 @@ class MCLABootstrapInput final : public rex::system::IInputSystem {
                       rex::input::X_INPUT_STATE* outState) override {
         X_RESULT physicalResult = X_ERROR_DEVICE_NOT_CONNECTED;
         if (driver_) {
-            physicalResult = driver_->GetState(userIndex, outState);
+            physicalResult = PrimaryPad(userIndex,[&](uint32_t index){
+                return driver_->GetState(index,outState);
+            });
             if (physicalResult != X_ERROR_SUCCESS &&
                 physicalResult != X_ERROR_DEVICE_NOT_CONNECTED) {
                 return physicalResult;
@@ -343,6 +349,14 @@ class MCLABootstrapInput final : public rex::system::IInputSystem {
         }
         if (outState && physicalResult == X_ERROR_DEVICE_NOT_CONNECTED) {
             std::memset(outState, 0, sizeof(*outState));
+        }
+        if(outState && userIndex<physicalPackets_.size()) {
+            const auto& p=outState->gamepad;
+            std::lock_guard lock(packetMutex_);
+            outState->packet_number=physicalPackets_[userIndex].Observe({
+                static_cast<uint16_t>(p.buttons),p.left_trigger,p.right_trigger,
+                static_cast<int16_t>(p.thumb_lx),static_cast<int16_t>(p.thumb_ly),
+                static_cast<int16_t>(p.thumb_rx),static_cast<int16_t>(p.thumb_ry)});
         }
 
         // Digital inputs OR with the physical pad. A touched analog stick (or
@@ -382,7 +396,9 @@ class MCLABootstrapInput final : public rex::system::IInputSystem {
     X_RESULT SetState(uint32_t userIndex,
                       rex::input::X_INPUT_VIBRATION* vibration) override {
         if (driver_) {
-            const X_RESULT result = driver_->SetState(userIndex, vibration);
+            const X_RESULT result = PrimaryPad(userIndex,[&](uint32_t index){
+                return driver_->SetState(index,vibration);
+            });
             if (result != X_ERROR_DEVICE_NOT_CONNECTED) {
                 return result;
             }
@@ -423,6 +439,19 @@ class MCLABootstrapInput final : public rex::system::IInputSystem {
     }
 
  private:
+    template<class Read> X_RESULT PrimaryPad(uint32_t requested,Read&& read) {
+        auto result=read(requested);
+        // This is a single-player title. If player zero disconnects while
+        // another pad remains in a later platform slot, route it to user zero.
+        if(requested==0 && result==X_ERROR_DEVICE_NOT_CONNECTED)
+            for(uint32_t i=1;i<4;++i) {
+                result=read(i);
+                if(result!=X_ERROR_DEVICE_NOT_CONNECTED) break;
+            }
+        return result;
+    }
+    std::mutex packetMutex_;
+    std::array<mcla::input::ControllerPacket,4> physicalPackets_{};
     std::unique_ptr<rex::input::ios::IOSInputDriver> driver_;
 };
 
@@ -495,6 +524,10 @@ uint64_t MCLAVirtualGamepadButtonEdgeCount() {
 }
 
 void MCLAResetVirtualGamepad() {
+    {
+        std::lock_guard lock(gVirtualKeystrokeMutex);
+        gVirtualKeystrokes.clear();
+    }
     constexpr uint16_t buttons[] = {
         MCLA_GAMEPAD_DPAD_UP, MCLA_GAMEPAD_DPAD_DOWN,
         MCLA_GAMEPAD_DPAD_LEFT, MCLA_GAMEPAD_DPAD_RIGHT,

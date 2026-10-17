@@ -36,6 +36,33 @@ static void MCLAControlChevron(CGContextRef c, CGFloat y, BOOL up) {
 // Icon coordinates are normalized to a square centered at the origin.
 static void MCLAControlIcon(CGContextRef c, NSString* key) {
     CGContextSetFillColorWithColor(c,MCLAControlInk(1).CGColor);
+    if([key hasPrefix:@"xbox_"]) {
+        NSString* symbol=[key substringFromIndex:5];
+        if([@[@"UP",@"DOWN",@"LEFT",@"RIGHT"] containsObject:symbol]) {
+            CGContextSaveGState(c);
+            CGFloat angle=[symbol isEqual:@"RIGHT"] ? M_PI_2 : [symbol isEqual:@"DOWN"] ? M_PI : [symbol isEqual:@"LEFT"] ? -M_PI_2 : 0;
+            CGContextRotateCTM(c,angle);
+            const CGPoint arrow[]={{-.30,0},{0,-.30},{.30,0}};
+            const CGPoint stem[]={{0,-.27},{0,.30}};
+            MCLAControlStroke(c,MCLAControlPolyline(arrow,3,NO),.08,1);
+            MCLAControlStroke(c,MCLAControlPolyline(stem,2,NO),.08,1);
+            CGContextRestoreGState(c);
+        } else if([symbol isEqual:@"MENU"]) {
+            for(int i=-1;i<=1;++i) {
+                const CGPoint line[]={{-.32,i*.22},{.32,i*.22}};
+                MCLAControlStroke(c,MCLAControlPolyline(line,2,NO),.065,1);
+            }
+        } else if([symbol isEqual:@"VIEW"]) {
+            MCLAControlStroke(c,[UIBezierPath bezierPathWithRect:CGRectMake(-.36,-.30,.47,.40)],.05,1);
+            MCLAControlStroke(c,[UIBezierPath bezierPathWithRect:CGRectMake(-.12,-.10,.47,.40)],.05,1);
+        } else {
+            UIFont* font=[UIFont systemFontOfSize:symbol.length==1 ? .90 : .62 weight:UIFontWeightBold];
+            NSDictionary* attributes=@{NSFontAttributeName:font,NSForegroundColorAttributeName:MCLAControlInk(1)};
+            CGSize size=[symbol sizeWithAttributes:attributes];
+            [symbol drawAtPoint:CGPointMake(-size.width/2,-size.height/2) withAttributes:attributes];
+        }
+        return;
+    }
     if([key isEqual:@"pause"]) {
         CGContextFillRect(c,CGRectMake(-.37,-.30,.12,.60));
         CGContextFillRect(c,CGRectMake(-.16,-.30,.12,.60));
@@ -139,7 +166,8 @@ static UIImage* MCLAControlArtwork(NSString* key, NSString* label, CGSize size, 
     image=[renderer imageWithActions:^(UIGraphicsImageRendererContext* context) {
         CGContextRef c=context.CGContext;
         if(!enabled) CGContextSetAlpha(c,.30);
-        BOOL pedal=[key isEqual:@"gas"] || [key isEqual:@"gas_handbrake"];
+        BOOL pedal=[key isEqual:@"gas"] || [key isEqual:@"gas_handbrake"] ||
+            [@[@"xbox_LT",@"xbox_RT",@"xbox_LB",@"xbox_RB"] containsObject:key];
         CGFloat d=MIN(size.width,size.height), padding=d*.045;
         CGRect r=pedal ? CGRectInset((CGRect){CGPointZero,size},padding,padding) : CGRectMake((size.width-d)/2+padding,(size.height-d)/2+padding,d-2*padding,d-2*padding);
         UIRectCorner corners=UIRectCornerAllCorners;

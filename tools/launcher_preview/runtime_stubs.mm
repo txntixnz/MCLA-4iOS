@@ -50,7 +50,12 @@ uint16_t MCLAControlPreviewButtons() { return previewButtons; }
 bool MCLAControlPreviewLeftTrigger() { return previewLeftTrigger; }
 void MCLASetVirtualGamepadTrigger(bool right,bool held) { if (right) previewRightTrigger=held; else previewLeftTrigger=held; }
 bool MCLAControlPreviewRightTrigger() { return previewRightTrigger; }
-void MCLASetVirtualGamepadLeftStick(float,float,bool) {}
-void MCLASetVirtualGamepadRightStick(float,float,bool) {}
-void MCLASetVirtualGamepadTilt(float,bool) {}
-void MCLAResetVirtualGamepad() { previewRightTrigger=false; previewLeftTrigger=false; previewButtons=0; }
+static bool previewLeftStickActive=false,previewRightStickActive=false,previewTiltActive=false;
+bool MCLAControlPreviewLeftStickActive() { return previewLeftStickActive; }
+bool MCLAControlPreviewRightStickActive() { return previewRightStickActive; }
+bool MCLAControlPreviewTiltActive() { return previewTiltActive; }
+void MCLASetVirtualGamepadLeftStick(float,float,bool active) { previewLeftStickActive=active; }
+void MCLASetVirtualGamepadRightStick(float,float,bool active) { previewRightStickActive=active; }
+void MCLASetVirtualGamepadTilt(float,bool active) { previewTiltActive=active; }
+void MCLAResetVirtualGamepad() { previewRightTrigger=false; previewLeftTrigger=false; previewButtons=0;
+    previewLeftStickActive=false;previewRightStickActive=false;previewTiltActive=false; }
