@@ -189,6 +189,11 @@ bool MCLAControlPreviewRightStickActive();
 }
 @end
 UIViewController* MCLACreateLauncherTestController(void) {
+    // Match an already configured installation; the unrelated first-run folder
+    // alert would otherwise occupy the settings presentation slot.
+    NSString* documents=NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+    [NSFileManager.defaultManager createDirectoryAtPath:[documents stringByAppendingPathComponent:@"MCLA_Game_Files"]
+        withIntermediateDirectories:YES attributes:nil error:nil];
     NSUserDefaults* defaults=NSUserDefaults.standardUserDefaults;
     [defaults setBool:YES forKey:@"MCLAXboxTouchLayoutEnabled"];
     [defaults setBool:YES forKey:@"MCLATouchEnabledControlOverhaulTest"];
