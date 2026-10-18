@@ -2950,9 +2950,12 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       return false;
     auto s = MCLANativeCanonicalDevice(raw);
     std::array<id<MTLTexture>, 4> colors{};
+    std::array<ng::SurfaceDescriptor, 4> colorSurfaces{};
     auto logicalTarget = Describe(R(s, 12448));
-    for (unsigned i = 0; i < 4; ++i)
-      colors[i] = Target(Describe(R(s, 12432 + i * 4)), false);
+    for (unsigned i = 0; i < 4; ++i) {
+      colorSurfaces[i] = Describe(R(s, 12432 + i * 4));
+      colors[i] = Target(colorSurfaces[i], false);
+    }
     for (unsigned i = 0; i < 4; ++i)
       if (colors[i]) { logicalTarget = Describe(R(s, 12432 + i * 4)); break; }
     auto depth = Target(Describe(R(s, 12448)), true);
@@ -2986,11 +2989,21 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       return true;
     const bool full = left == 0 && top == 0 && right == width &&
                       bottom == height;
-    const MTLClearColor clearColor = MTLClearColorMake(
+    const std::array<float, 4> guestClearColor{
         std::bit_cast<float>(c.color_bits[0]),
         std::bit_cast<float>(c.color_bits[1]),
         std::bit_cast<float>(c.color_bits[2]),
-        std::bit_cast<float>(c.color_bits[3]));
+        std::bit_cast<float>(c.color_bits[3])};
+    // The guest clear packer (824206A8, called by 824188E0) applies the
+    // target's signed six-bit exponent before converting its color format.
+    // Match the draw epilogue for EACH attachment. In the aerial-map lighting
+    // buffer the old raw clear was ~0.498, while drawn neutral geometry was
+    // 0.5 * 16 = 8, leaving a sharply bounded bright region after lighting.
+    auto clearColorFor = [&](unsigned i) {
+      const auto color = ng::ApplyNativeColorOutput(guestClearColor,
+          ng::NativeColorOutput(colorSurfaces[i].address));
+      return MTLClearColorMake(color[0], color[1], color[2], color[3]);
+    };
     const double clearDepth = std::bit_cast<double>(c.depth_bits);
     if (!full) {
       // Xenos Clear accepts a rectangle. Treating it as a Metal load-action
@@ -2998,13 +3011,14 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       // transition poses in the retained offscreen target. Draw the requested
       // clear rectangle explicitly instead.
       const MTLScissorRect scissor{left, top, right - left, bottom - top};
-      const float colorValue[4] = {float(clearColor.red),
-                                   float(clearColor.green),
-                                   float(clearColor.blue),
-                                   float(clearColor.alpha)};
       for (unsigned i = 0; i < 4; ++i) {
         if (!(c.flags & (1u << i)) || !colors[i])
           continue;
+        const auto clearColor = clearColorFor(i);
+        const float colorValue[4] = {float(clearColor.red),
+                                     float(clearColor.green),
+                                     float(clearColor.blue),
+                                     float(clearColor.alpha)};
         auto rp = [MTLRenderPassDescriptor renderPassDescriptor];
         rp.colorAttachments[0].texture = colors[i];
         rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
@@ -3106,7 +3120,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         a.loadAction =
             c.flags & (1u << i) ? MTLLoadActionClear : MTLLoadActionLoad;
         a.storeAction = MTLStoreActionStore;
-        a.clearColor = clearColor;
+        if (c.flags & (1u << i)) a.clearColor = clearColorFor(i);
       }
     if (depth) {
       rp.depthAttachment.texture = depth;
