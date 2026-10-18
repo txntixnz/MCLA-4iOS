@@ -21,6 +21,10 @@ with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
         'Library/Application Support/MCLA/runtime-status.txt': b'Xbox/AOT runtime setup failed.\n',
         'Documents/Diagnostics/nested/測試.csv': b'frame,ms\n' * 20000,
         'Documents/Diagnostics/empty.txt': b'',
+        'Documents/Diagnostics/VisualFrame/manifest.json': b'{"gpu_completed":true}',
+        'Documents/Diagnostics/VisualFrame/draws.bin': b'draw trace',
+        'Documents/Diagnostics/VisualFrame/constants.bin': b'constant bank',
+        'Documents/Diagnostics/VisualFrame/image-00.bin': b'pixel readback',
         'Library/Application Support/MCLA/native-capture/manifest.jsonl': b'{"test":true}\n',
         'Library/Application Support/MCLA/native-capture/shaders/vs-0123456789ABCDEF.bin': bytes(range(256)),
         'Library/Application Support/MCLA/native-capture/metadata/vs-elements-0123456789ABCDEF.bin': b'\x01\x00\x00\x00',
@@ -34,7 +38,11 @@ with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
     for name in ['Library/Application Support/MCLA/saves/private.txt',
         'Library/Application Support/MCLA/cache/private.log',
         'Documents/MCLA_Game_Files/default.xex',
-        'Documents/Diagnostics/raw.rpf']:
+        'Documents/Diagnostics/raw.rpf',
+        'Documents/Diagnostics/VisualFrame/raw.bin',
+        'Documents/Diagnostics/VisualFrame/unrelated.json',
+        'Documents/Diagnostics/VisualFrame/nested/manifest.json',
+        'Documents/Diagnostics/VisualFrame/image-08.bin']:
         path = home/name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'EXCLUDE')
@@ -45,6 +53,7 @@ with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
         ('geometry/vs-0123456789ABCDEF.bin', b'EXCLUDE'),
         ('shaders/vs-0123456789ABCDEF.bin.tmp', b'EXCLUDE')]:
         path=support/'native-capture'/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
+    (diagnostics/'VisualFrame/image-07.bin').write_bytes(bytes(16*1024*1024+1))
     outside = tmp/'outside.txt'
     outside.write_text('EXCLUDE')
     (diagnostics/'symlink.txt').symlink_to(outside)

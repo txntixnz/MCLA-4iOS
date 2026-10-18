@@ -69,8 +69,8 @@ BOOL Add(NSFileHandle* output, NSString* name, NSURL* source, NSData* content,
         std::vector<Entry> entries;
         BOOL valid = Add(output, @"report.txt", nil,
             [report dataUsingEncoding:NSUTF8StringEncoding], entries, error);
-        // Text diagnostics plus bounded shader-gap inputs. Geometry/frame data,
-        // game files and saves remain outside this export.
+        // Text diagnostics, bounded shader gaps and the explicit latest visual frame.
+        // Other geometry/frame data, game files and saves remain outside this export.
         NSArray* roots = @[@"Library/Application Support/MCLA", @"Documents/Diagnostics"];
         NSSet* extensions = [NSSet setWithArray:@[@"log", @"txt", @"csv", @"tsv", @"json", @"jsonl"]];
         NSString* base = [home.path stringByAppendingString:@"/"];
@@ -81,7 +81,8 @@ BOOL Add(NSFileHandle* output, NSString* name, NSURL* source, NSData* content,
             @"declarations":@"^decl-[0-9A-F]{16}\\.bin$",
             @"fetch":@"^fetch-[0-9A-F]{16}\\.bin$"};
         NSUInteger capturedFiles = 0, skippedCaptureFiles = 0;
-        uint64_t capturedBytes = 0;
+        uint64_t capturedBytes = 0, visualBytes = 0;
+        NSUInteger visualFiles = 0;
         constexpr uint64_t captureLimit = 8 * 1024 * 1024;
         for (NSString* relativeRoot in roots) {
             if (!valid) break;
@@ -132,7 +133,19 @@ BOOL Add(NSFileHandle* output, NSString* name, NSURL* source, NSData* content,
                         } else ++skippedCaptureFiles;
                     }
                 }
-                if (!text && !shaderGap) continue;
+                BOOL visual = NO;
+                if ([relative hasPrefix:@"Documents/Diagnostics/VisualFrame/"]) {
+                    NSArray* parts = [[relative substringFromIndex:@"Documents/Diagnostics/VisualFrame/".length] pathComponents];
+                    NSString* name = parts.count == 1 ? parts[0] : nil;
+                    BOOL allowed = [@[@"manifest.json", @"draws.bin", @"constants.bin"] containsObject:name ?: @""] ||
+                        (name && [name rangeOfString:@"^image-0[0-7]\\.bin$" options:NSRegularExpressionSearch].location != NSNotFound);
+                    NSNumber* bytes = nil;
+                    if (![url getResourceValue:&bytes forKey:NSURLFileSizeKey error:error]) {valid=NO;break;}
+                    if (!allowed || visualFiles >= 11 || bytes.unsignedLongLongValue > 16*1024*1024 ||
+                        visualBytes + bytes.unsignedLongLongValue > 64*1024*1024) continue;
+                    visual=YES; ++visualFiles; visualBytes+=bytes.unsignedLongLongValue;
+                }
+                if (!text && !shaderGap && !visual) continue;
                 valid = Add(output, relative, url, nil, entries, error);
                 if (!valid) break;
             }

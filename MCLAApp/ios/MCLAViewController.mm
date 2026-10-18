@@ -1,4 +1,5 @@
 #include "MCLADiagnostics.h"
+#include "MCLAVisualCaptureRequest.h"
 #import "MCLAViewController.h"
 
 #import "MCLAMetalView.h"
@@ -290,6 +291,14 @@ static void MCLARegisterGraphicsDefaults(void) {
             : [NSString stringWithFormat:
                 @"%.1f FPS   %.1f ms frame   %.1f ms GPU", fps,
                 fps > 0.0f ? 1000.0f / fps : 0.0f, gpuMilliseconds]);
+    using VisualState = mcla::metal::VisualCaptureRequest::State;
+    switch (mcla::metal::visualCaptureRequest.Get()) {
+        case VisualState::Armed: summary = @"VISUAL · capturing in 3 seconds"; break;
+        case VisualState::Capturing: case VisualState::Saving: summary = @"VISUAL · saving frame"; break;
+        case VisualState::Saved: summary = @"VISUAL SAVED · use Export Logs"; break;
+        case VisualState::Failed: summary = @"VISUAL FAILED · hold graph to retry"; break;
+        default: break;
+    }
     [summary drawAtPoint:CGPointMake(9.0, compact ? 5.0 : 7.0)
           withAttributes:@{
               NSFontAttributeName: [UIFont monospacedSystemFontOfSize:compact ? 9.5 : 11.0
@@ -670,7 +679,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     if (section == 0) return self.settingsLocked ? @"Close and relaunch to change scene resolution. Upscaling can change during play." : @"720p gives the most room for a steady 30 FPS. Upscaling sharpens the image to fit your screen.";
     if (section == 1) return @"Filtering, bloom, motion blur and depth of field apply on the next launch.";
     if (section == 2) return @"Play Mode settings apply on the next launch. Skip Intro Videos is on by default.";
-    return mcla::DiagnosticsEnabled() ? @"Double-tap the graph during play to record 20 seconds of frame timings." : @"Turn Retail Mode off before launching to enable the frame graph.";
+    return mcla::DiagnosticsEnabled() ? @"Double-tap the graph during play to record 20 seconds of frame timings. Hold it to capture one visual frame after 3 seconds, then use Export Logs." : @"Turn Retail Mode off before launching to enable the frame graph.";
 }
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)path {
     UITableViewCell* cell = [tableView dequeueReusableCellWithIdentifier:@"graphics-row"];
@@ -1082,6 +1091,10 @@ static void MCLARegisterGraphicsDefaults(void) {
         initWithTarget:self action:@selector(startPerformanceCapture:)];
     captureTap.numberOfTapsRequired = 2;
     [self.performanceGraph addGestureRecognizer:captureTap];
+    UILongPressGestureRecognizer* visualCapture = [[UILongPressGestureRecognizer alloc]
+        initWithTarget:self action:@selector(startVisualFrameCapture:)];
+    visualCapture.minimumPressDuration = 0.6;
+    [self.performanceGraph addGestureRecognizer:visualCapture];
     [self.view addSubview:self.performanceGraph];
     self.layoutHint = [[UILabel alloc] init];
     self.layoutHint.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1888,6 +1901,14 @@ static void MCLARegisterGraphicsDefaults(void) {
 - (void)startPerformanceCapture:(UITapGestureRecognizer*)recognizer {
     if (recognizer.state != UIGestureRecognizerStateRecognized) return;
     MCLAGraphicsStartPerformanceCapture();
+    [self.performanceGraph setNeedsDisplay];
+}
+
+- (void)startVisualFrameCapture:(UILongPressGestureRecognizer*)recognizer {
+    if (recognizer.state != UIGestureRecognizerStateBegan || !mcla::DiagnosticsEnabled()) return;
+    MCLAGraphicsReport report{}; MCLAGraphicsGetReport(&report);
+    if (report.titleDrivenFrames == 0) return;
+    mcla::metal::visualCaptureRequest.Request();
     [self.performanceGraph setNeedsDisplay];
 }
 
@@ -2781,7 +2802,7 @@ static void MCLARegisterGraphicsDefaults(void) {
         @"MCLA diagnostic export\nDate: %@\nVersion: %@ (%@)\nDevice: %s\niOS: %@\n"
          "Runtime: %s\nFailed: %d  Finished: %d  Entry reached: %d\nLaunch error: %@\nSettings: %@\n\nController triggers (current process): %@\n\n"
          "Metal: presenter=%d, testPipeline=%d, drawable=%ux%u, submitted=%llu, completed=%llu\nMetal detail: %s\n\n"
-         "Includes existing runtime logs, persistent GPU fault/recovery records and diagnostic text captures.\n"
+         "Includes existing runtime logs, persistent GPU fault/recovery records, diagnostic text and the latest requested visual frame.\n"
          "GPU fault records include their own build/session identity and remain enabled in Retail Mode.\n"
          "For detailed startup logs, turn Graphics > Retail Mode off, reopen MCLA and reproduce the issue.\n",
         NSDate.date, info[@"CFBundleShortVersionString"], info[@"CFBundleVersion"],

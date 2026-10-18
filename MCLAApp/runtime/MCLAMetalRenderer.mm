@@ -11,6 +11,7 @@
 #include "MCLAVertexBounds.h"
 #include "MCLAGPURecovery.h"
 #include "MCLAGPUFaultCapture.h"
+#include "MCLAVisualFrameCapture.h"
 #include "MCLAActiveVertexStreams.h"
 #include "MCLAVertexConversionRecipe.h"
 #include "MCLAPackedTexture.h"
@@ -698,6 +699,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   size_t passCaptureBytes_ = 0;
   // Opt-in, process-local A/B controls. Normal launches never read this file
   // and never substitute inputs. Tokens switch only between whole frames.
+  mcla::metal::VisualFrameCapture visualCapture_;
   bool renderProbe_ = false;
   NSString *probeMode_ = @"baseline";
   uint64_t probeToken_ = 0, probeOverrides_ = 0;
@@ -766,6 +768,8 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     });
   }
   void DiscardUnsubmittedFrame() {
+    visualCapture_.Abort();
+    mcla::metal::visualCaptureRequest.Fail();
     EndEncoder();
     if (!commands_) return;
     commands_ = nil;
@@ -913,6 +917,9 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       }
       [encoder_ endEncoding];
       encoder_ = nil;
+      if (visualCapture_.Active() && encoderDraws_)
+        visualCapture_.Snapshot(commands_, colors_[0], @"guest-pass-end",
+            drawSurfaces_[0].handle, draws_);
     }
     boundPipeline_ = nil;
     boundDepthState_ = nil;
@@ -2287,7 +2294,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto vs = GetShader(vs_), ps = GetShader(ps_);
     if (!vs || (ps_ && !ps))
       return Fail("shader");
-    const bool fullSnapshot = renderProbe_ || frames_ == passCaptureFrame_;
+    const bool fullSnapshot = visualCapture_.Active() || renderProbe_ || frames_ == passCaptureFrame_;
     auto state = MCLANativeCanonicalDevice(raw,
         fullSnapshot ? nullptr : vs->info->constants,
         fullSnapshot || !ps ? nullptr : ps->info->constants, !fullSnapshot && optimizeDrawState_);
@@ -2906,6 +2913,9 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           [encoder_ drawPrimitives:type vertexStart:start+slice.first vertexCount:slice.count];
     }
     ++draws_;
+    if (visualCapture_.Active())
+      visualCapture_.Draw(state,draws_,vs->info->hash,ps?ps->info->hash:0,
+          primitive,count,colors_[0]);
     for(const auto* shader : {vs,ps}) if(shader && shader->bundledIndex<0) {
       const std::pair<bool,uint64_t> key{shader->vertex,shader->info->hash};
       if(frameAutomaticShaders_.size()<128 && std::find(frameAutomaticShaders_.begin(),frameAutomaticShaders_.end(),key)==frameAutomaticShaders_.end())frameAutomaticShaders_.push_back(key);
@@ -3545,6 +3555,10 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     xn::xe_gpu_texture_fetch_t f{};
     memcpy(&f, c.frontbuffer_fetch, 24);
     auto source = TextureFor(c.frontbuffer_texture, f);
+    if (visualCapture_.Active()) {
+      visualCapture_.Snapshot(commands_,source,@"present-source",c.frontbuffer_texture,draws_,true);
+      visualCapture_.Finish(commands_);
+    }
     if (renderProbe_ && frames_ == passCaptureFrame_) {
       CapturePass(source, "present", 0);
       if (ProbeMode(@"pixel-history")) {
@@ -3842,6 +3856,8 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     commands_ = nil;
     slot_ = (slot_ + 1) % kFlights;
     PollRenderProbe();
+    if (mcla::DiagnosticsEnabled() && !renderProbe_ && mcla::metal::visualCaptureRequest.Begin())
+      visualCapture_.Start(frames_+1);
     return presented;
   }
 
