@@ -2915,7 +2915,8 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     ++draws_;
     if (visualCapture_.Active())
       visualCapture_.Draw(state,draws_,vs->info->hash,ps?ps->info->hash:0,
-          primitive,count,colors_[0]);
+          primitive,count,colors_[0],drawSurfaces_[0].address,drawSurfaces_[0].format,
+          drawSurfaces_[0].base,drawSurfaces_[0].sample_type,drawSurfaces_[0].width,drawSurfaces_[0].height);
     for(const auto* shader : {vs,ps}) if(shader && shader->bundledIndex<0) {
       const std::pair<bool,uint64_t> key{shader->vertex,shader->info->hash};
       if(frameAutomaticShaders_.size()<128 && std::find(frameAutomaticShaders_.begin(),frameAutomaticShaders_.end(),key)==frameAutomaticShaders_.end())frameAutomaticShaders_.push_back(key);

@@ -2,6 +2,7 @@
 #import <Metal/Metal.h>
 #include "../MCLAApp/runtime/MCLAVisualFrameCapture.h"
 #include <cassert>
+#include <cstdio>
 #include <thread>
 #include <vector>
 int main(int argc,const char** argv) { @autoreleasepool {
@@ -22,8 +23,8 @@ int main(int argc,const char** argv) { @autoreleasepool {
   assert(request.Request(0)&&request.Begin(3000000000ull));
   mcla::metal::VisualFrameCapture capture;capture.Start(7);
   std::array<uint8_t,16384> state{};state[12432]=0x12;state[12433]=0x34;
-  capture.Draw(state.data(),42,0x123456789ABCDEF0ull,0xFEDCBA9876543210ull,4,6,texture);
-  capture.Draw(state.data(),43,0x123456789ABCDEF0ull,0xFEDCBA9876543210ull,4,6,texture);
+  capture.Draw(state.data(),42,0x123456789ABCDEF0ull,0xFEDCBA9876543210ull,4,6,texture,0x123,0x18280186,0x40,0,640,360);
+  capture.Draw(state.data(),43,0x123456789ABCDEF0ull,0xFEDCBA9876543210ull,4,6,texture,0x123,0x18280186,0x40,0,640,360);
   assert(capture.Snapshot(commands,texture,@"guest-pass-end",0x12340000,43));
   assert(capture.Snapshot(commands,texture,@"present-source",0x4567,43,true));
   NSString* root=[NSString stringWithUTF8String:argv[1]];
@@ -36,4 +37,28 @@ int main(int argc,const char** argv) { @autoreleasepool {
   NSData* readback=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"image-01.bin"]];
   assert(readback.length==pixels.size()&&!std::memcmp(readback.bytes,pixels.data(),pixels.size()));
   std::puts("PASS: actual Metal fence/readback, two snapshots, state trace, deduplicated constants, saved result");
+  assert(request.Request(0)&&request.Begin(3000000000ull));
+  capture.Start(8);auto limited=[queue commandBuffer];
+  for(unsigned i=0;i<=capture.kMaxDraws;++i) {
+    std::memcpy(state.data()+1920,&i,4);
+    capture.Draw(state.data(),i,1,2,4,200,texture);
+  }
+  for(unsigned i=0;i<7;++i)assert(capture.Snapshot(limited,texture,@"guest-pass-end",1,i));
+  assert(!capture.Snapshot(limited,texture,@"overflow",1,8));
+  assert(capture.Snapshot(limited,texture,@"present-source",1,9,true));
+  capture.Finish(limited,[root stringByAppendingString:@"-limits"]);
+  [limited commit];[limited waitUntilCompleted];
+  for(int i=0;i<1000 && request.Get()==mcla::metal::VisualCaptureRequest::State::Saving;++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  assert(request.Get()==mcla::metal::VisualCaptureRequest::State::Saved);
+  assert(request.Request(0)&&request.Begin(3000000000ull));capture.Start(9);
+  auto failed=[queue commandBuffer];
+  NSString* blocker=[root stringByAppendingString:@"-file"];
+  assert([[NSData data] writeToFile:blocker atomically:YES]);
+  capture.Finish(failed,[blocker stringByAppendingPathComponent:@"VisualFrame"]);
+  [failed commit];[failed waitUntilCompleted];
+  for(int i=0;i<1000 && request.Get()==mcla::metal::VisualCaptureRequest::State::Saving;++i)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  assert(request.Get()==mcla::metal::VisualCaptureRequest::State::Failed);
+  std::puts("PASS: draw/constant/image caps, final-image reservation and disk failure publication");
 } }

@@ -25,11 +25,12 @@ public:
   struct DrawRecord {
     uint64_t draw, vs, ps;
     uint32_t primitive, count, surface, width, height, format;
+    uint32_t colorInfo, nativeFormat, base, sampleType, logicalWidth, logicalHeight;
     std::array<uint32_t,32> state;
     std::array<std::array<uint32_t,7>,26> textures; // handle then six fetch words
     uint32_t vsBank, psBank;
   };
-  static_assert(sizeof(DrawRecord) == 912);
+  static_assert(sizeof(DrawRecord) == 936);
 private:
   bool active_ = false, truncated_ = false;
   uint64_t frame_ = 0, droppedDraws_ = 0;
@@ -43,11 +44,11 @@ private:
   static uint32_t BE(const uint8_t* p) {
     return (uint32_t(p[0])<<24)|(uint32_t(p[1])<<16)|(uint32_t(p[2])<<8)|p[3];
   }
-  uint32_t Bank(const uint8_t* source) {
+  uint32_t Bank(const uint8_t* source, bool postDraw) {
     const auto hash = std::hash<std::string_view>{}(std::string_view(reinterpret_cast<const char*>(source),4096));
     for (size_t i=0; i<banks_.size(); ++i)
       if (bankHashes_[i]==hash && !std::memcmp(banks_[i].data(),source,4096)) return uint32_t(i);
-    if (banks_.size()==kMaxBanks) {truncated_=true;return UINT32_MAX;}
+    if (banks_.size()>=(postDraw ? kMaxBanks : kMaxBanks-64)) {truncated_=true;return UINT32_MAX;}
     std::array<uint8_t,4096> bytes; std::memcpy(bytes.data(),source,4096);
     bankHashes_.push_back(hash); banks_.push_back(bytes); return uint32_t(banks_.size()-1);
   }
@@ -60,19 +61,23 @@ public:
     token_=NSUUID.UUID.UUIDString;
   }
   void Draw(const uint8_t* state, uint64_t draw, uint64_t vs, uint64_t ps,
-      uint32_t primitive, uint32_t count, id<MTLTexture> target) {
+      uint32_t primitive, uint32_t count, id<MTLTexture> target,
+      uint32_t colorInfo=0, uint32_t nativeFormat=0, uint32_t base=0,
+      uint32_t sampleType=0, uint32_t logicalWidth=0, uint32_t logicalHeight=0) {
     if (!active_) return;
     if (draws_.size()==kMaxDraws) {truncated_=true;++droppedDraws_;return;}
     DrawRecord record{};
     record.draw=draw;record.vs=vs;record.ps=ps;record.primitive=primitive;record.count=count;
     record.surface=BE(state+12432);record.width=uint32_t(target.width);
     record.height=uint32_t(target.height);record.format=uint32_t(target.pixelFormat);
+    record.colorInfo=colorInfo;record.nativeFormat=nativeFormat;record.base=base;
+    record.sampleType=sampleType;record.logicalWidth=logicalWidth;record.logicalHeight=logicalHeight;
     for (size_t i=0;i<kStateOffsets.size();++i) record.state[i]=BE(state+kStateOffsets[i]);
     for (unsigned i=0;i<26;++i) {
       record.textures[i][0]=BE(state+12536+i*4);
       for(unsigned j=0;j<6;++j) record.textures[i][j+1]=BE(state+1152+i*24+j*4);
     }
-    record.vsBank=Bank(state+1920);record.psBank=Bank(state+6016);
+    record.vsBank=Bank(state+1920,count<=6);record.psBank=Bank(state+6016,count<=6);
     draws_.push_back(record);
   }
   bool Snapshot(id<MTLCommandBuffer> commands, id<MTLTexture> target,
@@ -119,8 +124,10 @@ public:
       @"missing_bank":@(UINT32_MAX),@"truncated":@(truncated_),@"dropped_draws":@(droppedDraws_),
       @"images":[images_ copy],@"record_layout":@{@"draw":@0,@"vs":@8,@"ps":@16,
         @"primitive":@24,@"count":@28,@"surface":@32,@"width":@36,@"height":@40,
-        @"format":@44,@"state_words":@48,@"texture_handle_and_fetch_words":@176,
-        @"vs_bank":@904,@"ps_bank":@908}};
+        @"format":@44,@"color_info":@48,@"native_format":@52,@"base":@56,
+        @"sample_type":@60,@"logical_width":@64,@"logical_height":@68,
+        @"state_words":@72,@"texture_handle_and_fetch_words":@200,
+        @"vs_bank":@928,@"ps_bank":@932}};
     NSArray* buffers=[buffers_ copy];
     NSString* destination=root ?: [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/Diagnostics/VisualFrame"];
     [commands addCompletedHandler:^(id<MTLCommandBuffer> cb) {

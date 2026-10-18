@@ -4,20 +4,20 @@ import argparse,collections,csv,json,pathlib,struct
 
 def decode(root,output):
     m=json.loads((root/'manifest.json').read_text())
-    if m.get('schema')!=1 or not m.get('gpu_completed') or m.get('draw_record_bytes')!=912:
+    if m.get('schema')!=1 or not m.get('gpu_completed') or m.get('draw_record_bytes')!=936:
         raise ValueError('Unsupported or incomplete capture')
     raw=(root/'draws.bin').read_bytes();banks=(root/'constants.bin').read_bytes()
-    if len(raw)!=m['draw_count']*912 or len(raw)>8192*912 or len(banks)!=m['constant_banks']*4096 or len(banks)>256*4096:
+    if len(raw)!=m['draw_count']*936 or len(raw)>8192*936 or len(banks)!=m['constant_banks']*4096 or len(banks)>256*4096:
         raise ValueError('Invalid trace size')
     output.mkdir(parents=True,exist_ok=True)
     pairs=collections.Counter()
     with (output/'draws.csv').open('w') as f:
-        w=csv.writer(f);w.writerow(['draw','vs','ps','primitive','count','surface','width','height','format','vs_bank','ps_bank']+[f'state_{o}' for o in m['state_offsets']])
-        for at in range(0,len(raw),912):
+        w=csv.writer(f);w.writerow(['draw','vs','ps','primitive','count','surface','width','height','format','color_info','native_format','base','sample_type','logical_width','logical_height','vs_bank','ps_bank']+[f'state_{o}' for o in m['state_offsets']])
+        for at in range(0,len(raw),936):
             draw,vs,ps=struct.unpack_from('<QQQ',raw,at)
-            fields=struct.unpack_from('<6I',raw,at+24)
-            state=struct.unpack_from('<32I',raw,at+48)
-            bank_ids=struct.unpack_from('<2I',raw,at+904)
+            fields=struct.unpack_from('<12I',raw,at+24)
+            state=struct.unpack_from('<32I',raw,at+72)
+            bank_ids=struct.unpack_from('<2I',raw,at+928)
             for b in bank_ids:
                 if b!=0xFFFFFFFF and b>=m['constant_banks']: raise ValueError('Invalid constant-bank reference')
             pairs[(vs,ps)]+=1
