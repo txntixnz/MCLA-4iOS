@@ -2781,7 +2781,8 @@ static void MCLARegisterGraphicsDefaults(void) {
         @"MCLA diagnostic export\nDate: %@\nVersion: %@ (%@)\nDevice: %s\niOS: %@\n"
          "Runtime: %s\nFailed: %d  Finished: %d  Entry reached: %d\nLaunch error: %@\nSettings: %@\n\nController triggers (current process): %@\n\n"
          "Metal: presenter=%d, testPipeline=%d, drawable=%ux%u, submitted=%llu, completed=%llu\nMetal detail: %s\n\n"
-         "Includes existing runtime logs and diagnostic text captures.\n"
+         "Includes existing runtime logs, persistent GPU fault/recovery records and diagnostic text captures.\n"
+         "GPU fault records include their own build/session identity and remain enabled in Retail Mode.\n"
          "For detailed startup logs, turn Graphics > Retail Mode off, reopen MCLA and reproduce the issue.\n",
         NSDate.date, info[@"CFBundleShortVersionString"], info[@"CFBundleVersion"],
         hardware.machine, UIDevice.currentDevice.systemVersion, runtime.detail,

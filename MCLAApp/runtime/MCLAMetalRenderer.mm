@@ -10,6 +10,7 @@
 #include "MCLAVertexFixup.h"
 #include "MCLAVertexBounds.h"
 #include "MCLAGPURecovery.h"
+#include "MCLAGPUFaultCapture.h"
 #include "MCLAActiveVertexStreams.h"
 #include "MCLAVertexConversionRecipe.h"
 #include "MCLAPackedTexture.h"
@@ -661,6 +662,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   std::unordered_map<uint32_t, uint64_t> invalidResolveFormats_;
   std::atomic<uint64_t> completed_{0}, gpuErrors_{0};
   mcla::metal::GPURecovery gpuRecovery_;
+  mcla::metal::GPUFaultJournal faultJournal_;
   std::atomic<bool> gpuStopReported_{false};
   uint64_t gpuRecoveries_ = 0;
   static constexpr size_t kShaderWords = (std::size(kMCLAMetalShaders)+63)/64;
@@ -742,6 +744,9 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   void ReportGPUStop() {
     if (gpuStopReported_.exchange(true)) return;
+    faultJournal_.Record("rendering_stopped", "{\"error_count\":" +
+        std::to_string(gpuErrors_.load()) + ",\"recovery_state\":" +
+        std::to_string(unsigned(gpuRecovery_.Get())) + "}");
     REXLOG_ERROR("MCLA METAL rendering stopped: GPU access lost or recovery drain failed; restart the app");
     dispatch_async(dispatch_get_main_queue(), ^{
       UIViewController* controller = nil;
@@ -770,6 +775,10 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   bool RecoverGPU() {
     if (!gpuRecovery_.Start()) return !gpuRecovery_.Terminal();
+    const double recoveryStart = CACurrentMediaTime();
+    faultJournal_.Record("recovery_begin", "{\"frame\":" +
+        std::to_string(frames_+1) + ",\"error_count\":" +
+        std::to_string(gpuErrors_.load()) + "}");
     REXLOG_WARN("MCLA METAL recovery begin frame={} errors={}",frames_+1,gpuErrors_.load());
     const auto deadline=dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC);
     unsigned drained=0;
@@ -777,7 +786,12 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       if (dispatch_semaphore_wait(flights_[drained].available,deadline)) break;
     if (drained!=kFlights || gpuRecovery_.Terminal()) {
       for(unsigned i=0;i<drained;++i)dispatch_semaphore_signal(flights_[i].available);
-      gpuRecovery_.Fail(); ReportGPUStop(); return false;
+      gpuRecovery_.Fail();
+      faultJournal_.Record("recovery_failed", "{\"frame\":" +
+          std::to_string(frames_+1) + ",\"drained_flights\":" +
+          std::to_string(drained) + ",\"recovery_state\":" +
+          std::to_string(unsigned(gpuRecovery_.Get())) + "}");
+      ReportGPUStop(); return false;
     }
     // Every flight is complete. Rebuild mutable outputs from a clean state.
     EndEncoder();
@@ -798,9 +812,17 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (!queue_) gpuRecovery_.Fail();
     const bool recovered=queue_ && gpuRecovery_.Finish();
     for(auto& flight:flights_) dispatch_semaphore_signal(flight.available);
-    if (!recovered) { ReportGPUStop(); return false; }
+    if (!recovered) {
+      faultJournal_.Record("recovery_failed", "{\"frame\":" +
+          std::to_string(frames_+1) + ",\"reason\":\"queue_or_terminal\"}");
+      ReportGPUStop(); return false;
+    }
     ++gpuRecoveries_;
     presentationClock_={};
+    faultJournal_.Record("recovery_complete", "{\"frame\":" +
+        std::to_string(frames_+1) + ",\"recoveries\":" +
+        std::to_string(gpuRecoveries_) + ",\"duration_ms\":" +
+        std::to_string((CACurrentMediaTime()-recoveryStart)*1000) + "}");
     REXLOG_INFO("MCLA METAL recovery complete frame={} recoveries={} flights=3 outputs=reset uploads=reset",frames_+1,gpuRecoveries_);
     return true;
   }
@@ -825,12 +847,12 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     for (auto& bank : constantBanks_) bank.snapshot.Reset();
     sharedConstantsSnapshot_.Reset();
     sharedConstantsUpload_ = {};
-    if (mcla::DiagnosticsEnabled()) {
-      auto descriptor = [MTLCommandBufferDescriptor new];
-      descriptor.retainedReferences = YES;
-      descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
-      commands_ = [queue_ commandBufferWithDescriptor:descriptor];
-    } else commands_ = [queue_ commandBuffer];
+    // Enhanced errors are also needed in Retail Mode. This records encoder
+    // status in Metal, not per-draw disk logs or shader instrumentation.
+    auto descriptor = [MTLCommandBufferDescriptor new];
+    descriptor.retainedReferences = YES;
+    descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
+    commands_ = [queue_ commandBufferWithDescriptor:descriptor];
     if (!commands_) {
       dispatch_semaphore_signal(f.available);
       return false;
@@ -856,9 +878,13 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     encoderDraws_=encoderPairCount_=0; encoderLastPair_={};
     if (commands_.errorOptions != MTLCommandBufferErrorOptionNone) {
       auto texture = pass.colorAttachments[0].texture ?: pass.depthAttachment.texture;
-      encoder.label = [NSString stringWithFormat:@"%s %lux%lu initial_vs=%016llX initial_ps=%016llX",
-          kind,(unsigned long)texture.width,(unsigned long)texture.height,
-          (unsigned long long)shaderHandles_[vs_],(unsigned long long)shaderHandles_[ps_]];
+      if (guest)
+        encoder.label = [NSString stringWithFormat:@"%s %lux%lu initial_vs=%016llX initial_ps=%016llX",
+            kind,(unsigned long)texture.width,(unsigned long)texture.height,
+            (unsigned long long)shaderHandles_[vs_],(unsigned long long)shaderHandles_[ps_]];
+      else
+        encoder.label = [NSString stringWithFormat:@"%s %lux%lu",
+            kind,(unsigned long)texture.width,(unsigned long)texture.height];
     }
     return encoder;
   }
@@ -2884,6 +2910,10 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       const std::pair<bool,uint64_t> key{shader->vertex,shader->info->hash};
       if(frameAutomaticShaders_.size()<128 && std::find(frameAutomaticShaders_.begin(),frameAutomaticShaders_.end(),key)==frameAutomaticShaders_.end())frameAutomaticShaders_.push_back(key);
     }
+    // Constant-size pass context survives Retail Mode without string work or
+    // disk writes on individual draws. Detailed pair inventories stay opt-in.
+    ++encoderDraws_;
+    encoderLastPair_={vs->info->hash,ps?ps->info->hash:0};
     if (mcla::DiagnosticsEnabled()) {
       for(const auto* shader : {vs,ps}) if(shader) {
         if(shader->bundledIndex>=0) {
@@ -2891,8 +2921,6 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           frameShaderBits_[index/64]|=uint64_t(1)<<(index%64);
         }
       }
-      ++encoderDraws_;
-      encoderLastPair_={vs->info->hash,ps?ps->info->hash:0};
       if(encoderPairCount_<encoderPairs_.size() &&
           std::find(encoderPairs_.begin(),encoderPairs_.begin()+encoderPairCount_,encoderLastPair_)==encoderPairs_.begin()+encoderPairCount_)
         encoderPairs_[encoderPairCount_++]=encoderLastPair_;
@@ -3667,8 +3695,13 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         const bool revoked=[cb.error.domain isEqualToString:MTLCommandBufferErrorDomain] &&
             cb.error.code==MTLCommandBufferErrorBlacklisted;
         self->gpuRecovery_.Error(revoked);
-        if (revoked) self->ReportGPUStop();
         const auto errors = self->gpuErrors_.fetch_add(1)+1;
+        // Bound pathological error storms while retaining later milestones.
+        if (errors<=16 || errors%120==0)
+          mcla::metal::CaptureGPUFailure(self->faultJournal_,cb,frame,errors,
+              MCLAGraphicsApplicationActive(),unsigned(NSProcessInfo.processInfo.thermalState),
+              automaticShaders);
+        if (revoked) self->ReportGPUStop();
         if(errors<=8 || errors%120==0) REXLOG_ERROR("MCLA METAL GPU error: frame={} domain={} code={} active_at_completion={} thermal={}: {}",
             frame,cb.error.domain.UTF8String,long(cb.error.code),
             MCLAGraphicsApplicationActive(),int(NSProcessInfo.processInfo.thermalState),
@@ -3824,6 +3857,10 @@ public:
     layer_ = (__bridge CAMetalLayer *)MCLAGraphicsBoundMetalLayer();
     device_ = layer_.device;
     queue_ = [device_ newCommandQueue];
+    NSString* faultDirectory = [NSHomeDirectory() stringByAppendingPathComponent:
+        @"Library/Application Support/MCLA/logs"];
+    mcla::metal::StartGPUFaultCapture(faultJournal_,faultDirectory,
+        NSBundle.mainBundle.infoDictionary,device_.name,mcla::DiagnosticsEnabled());
     gpuCountersSupported_=[device_ supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary];
     if (!device_ || !queue_)
       return 0xC0000001;
@@ -3970,6 +4007,7 @@ public:
     REXLOG_INFO("MCLA HANDWRITTEN METAL active device={} flight_slots=3 "
                 "generic_cp=0 vulkan=0 moltenvk=0",
                 device_.name.UTF8String);
+    faultJournal_.Record("renderer_ready", "{\"flight_slots\":3,\"encoder_status\":true}");
     return 0;
   }
   uint32_t GetTitleCommandAbi(uint32_t title) const override {

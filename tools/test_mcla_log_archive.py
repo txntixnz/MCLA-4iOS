@@ -14,6 +14,8 @@ with tempfile.TemporaryDirectory(prefix='mcla-log-test-') as tmp:
     support.mkdir(parents=True)
     diagnostics.mkdir(parents=True)
     expected = {'Library/Application Support/MCLA/runtime.log': b'failure details\n',
+        'Library/Application Support/MCLA/logs/gpu-faults.jsonl': b'{"event":"session","build":"26"}\n',
+        'Library/Application Support/MCLA/logs/gpu-faults.previous.jsonl': b'{"event":"gpu_error","build":"25"}\n',
         'Library/Application Support/MCLA/runtime.log.1': b'previous log\n',
         'Library/Application Support/MCLA/native-frame-capture/nested/frame.json': b'{}',
         'Library/Application Support/MCLA/runtime-status.txt': b'Xbox/AOT runtime setup failed.\n',
