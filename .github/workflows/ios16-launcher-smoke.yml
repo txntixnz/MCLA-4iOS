@@ -48,6 +48,10 @@ jobs:
         run: python3 tools/test_ios16_aot_graphics.py -v
       - name: Verify bounded shader-gap export and diagnostic ZIP integrity
         run: python3 tools/test_mcla_log_archive.py
+      - name: Check persistent GPU faults, Retail Mode serialization and relaunch export
+        run: |
+          python3 tools/test_mcla_gpu_fault_journal.py
+          python3 tools/test_mcla_gpu_fault_capture.py
       - name: Stress the owned-byte Metal loader with limited file descriptors
         run: |
           xcrun clang++ -std=c++23 -fobjc-arc -fblocks tools/test_mcla_metal_library.mm \
