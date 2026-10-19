@@ -16,6 +16,7 @@
 #define REXLOG_WARN(...) ((void)0)
 #else
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #endif
 
 namespace mcla::shader {

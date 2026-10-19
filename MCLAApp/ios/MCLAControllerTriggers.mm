@@ -1,3 +1,4 @@
+#include "MCLADiagnostics.h"
 #import "MCLAControllerTriggers.h"
 #include "MCLAControllerInput.h"
 #include <array>
@@ -84,7 +85,7 @@ extern "C" uint8_t MCLAControllerTriggerValue(void* rawController,bool right,flo
     std::lock_guard lock(stateMutex);
     auto* state=State(controller);
     const unsigned i=right ? 1 : 0;
-    if(std::isfinite(raw)) {
+    if(!mcla::kGameplayOnly && std::isfinite(raw)) {
         if(!state->seen[i]) state->minimum[i]=state->maximum[i]=raw;
         else {
             state->minimum[i]=std::min(state->minimum[i],raw);
@@ -98,11 +99,12 @@ extern "C" uint8_t MCLAControllerTriggerValue(void* rawController,bool right,flo
         return 0;
     }
     const uint8_t output=state->range[i].Convert(raw);
-    state->guestMaximum[i]=std::max(state->guestMaximum[i],output);
+    if constexpr (!mcla::kGameplayOnly) state->guestMaximum[i]=std::max(state->guestMaximum[i],output);
     return output;
 }
 
 static NSString* TriggerDiagnostics(bool persist) {
+    if constexpr (mcla::kGameplayOnly) return @"Disabled in Gameplay Edition";
     std::lock_guard lock(stateMutex);
     NSMutableArray* entries=[NSMutableArray array];
     for(MCLATriggerState* state in States().objectEnumerator) {

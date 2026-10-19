@@ -174,14 +174,14 @@ static void MCLARegisterGraphicsDefaults(void) {
     // Ordinary builds have no profile key; subsequent user choices persist.
     NSUserDefaults* defaults = NSUserDefaults.standardUserDefaults;
     NSString* bringup = [NSBundle.mainBundle objectForInfoDictionaryKey:@"MCLABringupProfile"];
-    if ([bringup isKindOfClass:NSString.class] && bringup.length &&
+    if (!mcla::kGameplayOnly && [bringup isKindOfClass:NSString.class] && bringup.length &&
         ![[defaults stringForKey:@"MCLAAppliedBringupProfile"] isEqualToString:bringup]) {
         [defaults setBool:NO forKey:@"MCLARetailMode"];
         [defaults setObject:bringup forKey:@"MCLAAppliedBringupProfile"];
     }
     mcla::SetDiagnosticsEnabled(![defaults boolForKey:@"MCLARetailMode"]);
     // Explicit developer launches can capture without changing retail preferences.
-    if ([NSProcessInfo.processInfo.environment[@"MCLA_AUDIT_CAPTURE"] boolValue])
+    if (!mcla::kGameplayOnly && [NSProcessInfo.processInfo.environment[@"MCLA_AUDIT_CAPTURE"] boolValue])
         mcla::SetDiagnosticsEnabled(true);
 #if MCLA_SMAA_LAB
     [NSUserDefaults.standardUserDefaults registerDefaults:@{@"MCLASMAAEnabled": @YES}];
@@ -678,7 +678,8 @@ static void MCLARegisterGraphicsDefaults(void) {
     if (section == 4) return @"Automatic Shaders applies after reopening MCLA. New effects may briefly appear while preparing. 60 FPS needs more performance headroom; 30 FPS remains the standard target.";
     if (section == 0) return self.settingsLocked ? @"Close and relaunch to change scene resolution. Upscaling can change during play." : @"720p gives the most room for a steady 30 FPS. Upscaling sharpens the image to fit your screen.";
     if (section == 1) return @"Filtering, bloom, motion blur and depth of field apply on the next launch.";
-    if (section == 2) return @"Play Mode settings apply on the next launch. Skip Intro Videos is on by default.";
+    if (section == 2) return mcla::kGameplayOnly ? @"All diagnostics are disabled in Gameplay Edition." : @"Play Mode settings apply on the next launch. Skip Intro Videos is on by default.";
+    if (mcla::kGameplayOnly) return @"Frame graphs and recordings are disabled in Gameplay Edition.";
     return mcla::DiagnosticsEnabled() ? @"Double-tap the graph during play to record 20 seconds of frame timings. Hold it to capture one visual frame after 3 seconds, then use Export Logs." : @"Turn Retail Mode off before launching to enable the frame graph.";
 }
 - (UITableViewCell*)tableView:(UITableView*)tableView cellForRowAtIndexPath:(NSIndexPath*)path {
@@ -720,6 +721,9 @@ static void MCLARegisterGraphicsDefaults(void) {
     } else if (path.section == 2 && path.row == 0) {
         title = @"Retail Mode"; detail = @"Play with reduced diagnostic overhead"; icon = @"steeringwheel";
         key = @"MCLARetailMode"; action = @selector(retailModeChanged:); on = [defaults boolForKey:key];
+        if constexpr (mcla::kGameplayOnly) {
+            title = @"Gameplay Edition"; detail = @"All diagnostics disabled"; enabled = NO; on = YES;
+        }
     } else if (path.section == 2) {
         title = @"Skip Intro Videos"; detail = @"Go straight past startup movies"; icon = @"forward.end";
         key = @"MCLASkipIntro"; action = @selector(skipIntroChanged:); on = [defaults boolForKey:key];
@@ -1033,6 +1037,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     panel.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:panel];
     self.panel = panel;
+    if constexpr (mcla::kGameplayOnly) panel.logsButton.hidden = YES;
 
     UIButton* startButton = [self makeTouchButton:@"START"
                                               tag:MCLA_GAMEPAD_START];
@@ -1051,6 +1056,7 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self.editButton addTarget:self action:@selector(toggleTouchLayoutEditing:)
               forControlEvents:UIControlEventTouchUpInside];
     UIButton* performanceButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    performanceButton.hidden = mcla::kGameplayOnly;
     performanceButton.translatesAutoresizingMaskIntoConstraints = NO;
     [performanceButton setTitle:@"FPS" forState:UIControlStateNormal];
     performanceButton.titleLabel.font =
@@ -1888,6 +1894,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 
 - (void)togglePerformanceOverlay:(UIButton*)sender {
+    if constexpr (mcla::kGameplayOnly) return;
     (void)sender;
     const BOOL visible = ![NSUserDefaults.standardUserDefaults
         boolForKey:@"MCLAPerformanceOverlay"];
@@ -2278,6 +2285,9 @@ static void MCLARegisterGraphicsDefaults(void) {
     [self.panel setSceneActive:!gameVisible && !self.editingTouchLayout && !self.launchRequested && !runtime.running &&
         !self.presentedViewController &&
         UIApplication.sharedApplication.applicationState == UIApplicationStateActive];
+    if (mcla::kGameplayOnly && gameVisible) {
+        [self.statusTimer invalidate]; self.statusTimer = nil;
+    }
     if (gameVisible && !self.sceneReleased) {
         [self.panel releaseScene];
         self.sceneReleased = YES;
@@ -2288,7 +2298,7 @@ static void MCLARegisterGraphicsDefaults(void) {
         [NSUserDefaults.standardUserDefaults boolForKey:@"MCLAPerformanceOverlay"]);
     if (!self.performanceGraph.hidden)
         [self.performanceGraph setNeedsDisplay];
-    if ([NSProcessInfo.processInfo.environment[@"MCLA_AUDIT_CAPTURE"] boolValue] &&
+    if (!mcla::kGameplayOnly && [NSProcessInfo.processInfo.environment[@"MCLA_AUDIT_CAPTURE"] boolValue] &&
         graphics.titleDrivenFrames>=1200 && self.auditCaptureCount<3 &&
         CACurrentMediaTime()>=self.nextAuditCapture && !MCLAGraphicsPerformanceCaptureActive()) {
         if (MCLAGraphicsStartPerformanceCapture()) {
@@ -2785,6 +2795,7 @@ static void MCLARegisterGraphicsDefaults(void) {
 }
 
 - (void)exportLogs:(UIButton*)sender {
+    if constexpr (mcla::kGameplayOnly) return;
     MCLARuntimeReport runtime = {}; MCLAHostGetRuntimeReport(&runtime);
     MCLAGraphicsReport graphics = {}; MCLAGraphicsGetReport(&graphics);
     if (self.exportingLogs || self.gameVisible || (runtime.running && !runtime.failed) || self.presentedViewController) return;

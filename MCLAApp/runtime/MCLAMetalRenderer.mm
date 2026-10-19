@@ -62,6 +62,7 @@
 #include <rex/graphics/pipeline/texture/info.h>
 #include <rex/graphics/pipeline/texture/util.h>
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/memory.h>
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/interfaces/graphics.h>
@@ -652,7 +653,9 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   bool UpdateDynamic(mcla::metal::EncoderState<T,N>& cache,
                      const std::array<T,N>& value) {
     const bool changed = !optimizeDrawState_ || cache.Update(value);
-    if (changed) ++dynamicStateCalls_; else ++dynamicStateSkips_;
+    if constexpr (!mcla::kGameplayOnly) {
+      if (changed) ++dynamicStateCalls_; else ++dynamicStateSkips_;
+    }
     return changed;
   }
   id<MTLTexture> fallback_[4] = {nil, nil, nil, nil};
@@ -721,7 +724,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   mcla::metal::PresentationClock presentationClock_;
   bool Fail(const char *why) {
     ++failed_;
-    if (++failuresByReason_[why] <= 3)
+    if (!mcla::kGameplayOnly && ++failuresByReason_[why] <= 3)
       REXLOG_ERROR("MCLA METAL rejected {} vs={:016X} ps={:016X}", why,
                    shaderHandles_[vs_], shaderHandles_[ps_]);
     return false;
@@ -746,7 +749,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   void ReportGPUStop() {
     if (gpuStopReported_.exchange(true)) return;
-    faultJournal_.Record("rendering_stopped", "{\"error_count\":" +
+    if constexpr (!mcla::kGameplayOnly) faultJournal_.Record("rendering_stopped", "{\"error_count\":" +
         std::to_string(gpuErrors_.load()) + ",\"recovery_state\":" +
         std::to_string(unsigned(gpuRecovery_.Get())) + "}");
     REXLOG_ERROR("MCLA METAL rendering stopped: GPU access lost or recovery drain failed; restart the app");
@@ -779,8 +782,8 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   bool RecoverGPU() {
     if (!gpuRecovery_.Start()) return !gpuRecovery_.Terminal();
-    const double recoveryStart = CACurrentMediaTime();
-    faultJournal_.Record("recovery_begin", "{\"frame\":" +
+    const double recoveryStart = mcla::kGameplayOnly ? 0 : CACurrentMediaTime();
+    if constexpr (!mcla::kGameplayOnly) faultJournal_.Record("recovery_begin", "{\"frame\":" +
         std::to_string(frames_+1) + ",\"error_count\":" +
         std::to_string(gpuErrors_.load()) + "}");
     REXLOG_WARN("MCLA METAL recovery begin frame={} errors={}",frames_+1,gpuErrors_.load());
@@ -791,7 +794,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (drained!=kFlights || gpuRecovery_.Terminal()) {
       for(unsigned i=0;i<drained;++i)dispatch_semaphore_signal(flights_[i].available);
       gpuRecovery_.Fail();
-      faultJournal_.Record("recovery_failed", "{\"frame\":" +
+      if constexpr (!mcla::kGameplayOnly) faultJournal_.Record("recovery_failed", "{\"frame\":" +
           std::to_string(frames_+1) + ",\"drained_flights\":" +
           std::to_string(drained) + ",\"recovery_state\":" +
           std::to_string(unsigned(gpuRecovery_.Get())) + "}");
@@ -817,13 +820,13 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     const bool recovered=queue_ && gpuRecovery_.Finish();
     for(auto& flight:flights_) dispatch_semaphore_signal(flight.available);
     if (!recovered) {
-      faultJournal_.Record("recovery_failed", "{\"frame\":" +
+      if constexpr (!mcla::kGameplayOnly) faultJournal_.Record("recovery_failed", "{\"frame\":" +
           std::to_string(frames_+1) + ",\"reason\":\"queue_or_terminal\"}");
       ReportGPUStop(); return false;
     }
     ++gpuRecoveries_;
     presentationClock_={};
-    faultJournal_.Record("recovery_complete", "{\"frame\":" +
+    if constexpr (!mcla::kGameplayOnly) faultJournal_.Record("recovery_complete", "{\"frame\":" +
         std::to_string(frames_+1) + ",\"recoveries\":" +
         std::to_string(gpuRecoveries_) + ",\"duration_ms\":" +
         std::to_string((CACurrentMediaTime()-recoveryStart)*1000) + "}");
@@ -835,14 +838,14 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (commands_)
       return true;
     auto &f = flights_[slot_];
-    const double waitStart = CACurrentMediaTime();
+    const double waitStart = mcla::kGameplayOnly ? 0 : CACurrentMediaTime();
     dispatch_semaphore_wait(f.available, DISPATCH_TIME_FOREVER);
-    frameSlotWaitMS_ += (CACurrentMediaTime() - waitStart) * 1000;
+    if constexpr (!mcla::kGameplayOnly) frameSlotWaitMS_ += (CACurrentMediaTime() - waitStart) * 1000;
     // Recovery runs at a command boundary, never inside Target/Attach.
     if (gpuRecovery_.Get()!=mcla::metal::GPURecovery::State::Ready) {
       dispatch_semaphore_signal(f.available); return false;
     }
-    frameShaderBits_={};
+    if constexpr (!mcla::kGameplayOnly) frameShaderBits_={};
     frameAutomaticShaders_.clear();
     f.block = 0;
     f.offset = 0;
@@ -851,19 +854,20 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     for (auto& bank : constantBanks_) bank.snapshot.Reset();
     sharedConstantsSnapshot_.Reset();
     sharedConstantsUpload_ = {};
-    // Enhanced errors are also needed in Retail Mode. This records encoder
-    // status in Metal, not per-draw disk logs or shader instrumentation.
+    // Retail diagnostics keep encoder status. Gameplay Edition requests
+    // standard command buffers without Metal error instrumentation.
     auto descriptor = [MTLCommandBufferDescriptor new];
     descriptor.retainedReferences = YES;
-    descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
+    descriptor.errorOptions = mcla::kGameplayOnly ? MTLCommandBufferErrorOptionNone
+        : MTLCommandBufferErrorOptionEncoderExecutionStatus;
     commands_ = [queue_ commandBufferWithDescriptor:descriptor];
     if (!commands_) {
       dispatch_semaphore_signal(f.available);
       return false;
     }
-    commands_.label = [NSString stringWithFormat:@"MCLA handwritten Metal frame %llu",(unsigned long long)(frames_+1)];
+    if constexpr (!mcla::kGameplayOnly) commands_.label = [NSString stringWithFormat:@"MCLA handwritten Metal frame %llu",(unsigned long long)(frames_+1)];
     gpuPassTrace_.reset();gpuPassTraceStatus_=0;
-    if(MCLAGraphicsPerformanceCaptureActive() && frames_%30==0) {
+    if(mcla::DiagnosticsEnabled() && MCLAGraphicsPerformanceCaptureActive() && frames_%30==0) {
       if(!gpuCountersSupported_)gpuPassTraceStatus_=-1;
       else {
         if(!f.counters)f.counters=mcla::metal::GPUPassTrace::CreateBuffer(device_);
@@ -880,7 +884,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if(gpuPassTrace_)gpuPassTrace_->Render(pass,kind,guest);
     auto encoder = [commands_ renderCommandEncoderWithDescriptor:pass];
     encoderDraws_=encoderPairCount_=0; encoderLastPair_={};
-    if (commands_.errorOptions != MTLCommandBufferErrorOptionNone) {
+    if (!mcla::kGameplayOnly && commands_.errorOptions != MTLCommandBufferErrorOptionNone) {
       auto texture = pass.colorAttachments[0].texture ?: pass.depthAttachment.texture;
       if (guest)
         encoder.label = [NSString stringWithFormat:@"%s %lux%lu initial_vs=%016llX initial_ps=%016llX",
@@ -900,13 +904,13 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       gpuPassTrace_->Blit(pass,kind);
       encoder=[commands_ blitCommandEncoderWithDescriptor:pass];
     }
-    if (commands_.errorOptions != MTLCommandBufferErrorOptionNone)
+    if (!mcla::kGameplayOnly && commands_.errorOptions != MTLCommandBufferErrorOptionNone)
       encoder.label = [NSString stringWithUTF8String:kind];
     return encoder;
   }
   void EndEncoder() {
     if (encoder_) {
-      if (encoderDraws_ && commands_.errorOptions!=MTLCommandBufferErrorOptionNone) {
+      if (!mcla::kGameplayOnly && encoderDraws_ && commands_.errorOptions!=MTLCommandBufferErrorOptionNone) {
         char pairs[400]{}; size_t used=0;
         for(unsigned i=0;i<encoderPairCount_;++i)
           used+=size_t(std::snprintf(pairs+used,sizeof(pairs)-used,"%016llX/%016llX,",
@@ -917,7 +921,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       }
       [encoder_ endEncoding];
       encoder_ = nil;
-      if (visualCapture_.Active() && encoderDraws_)
+      if (mcla::DiagnosticsEnabled() && visualCapture_.Active() && encoderDraws_)
         visualCapture_.Snapshot(commands_, colors_[0], @"guest-pass-end",
             drawSurfaces_[0].handle, draws_);
     }
@@ -942,10 +946,10 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     const uint64_t identity = uint64_t(reinterpret_cast<uintptr_t>(
         (__bridge void*)resource));
     if (!encoderReadResources_.insert(identity).second) {
-      ++resourceDeclarationSkips_;
+      if constexpr (!mcla::kGameplayOnly) ++resourceDeclarationSkips_;
       return;
     }
-    ++resourceDeclarations_;
+    if constexpr (!mcla::kGameplayOnly) ++resourceDeclarations_;
     [encoder_ useResource:resource
                     usage:MTLResourceUsageRead
                    stages:MTLRenderStageVertex | MTLRenderStageFragment];
@@ -954,6 +958,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     return renderProbe_ && [probeMode_ isEqualToString:mode];
   }
   void PollRenderProbe() {
+    if constexpr (mcla::kGameplayOnly) return;
     if (!renderProbe_ || frames_ % 30) return;
     NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/mcla-render-probe.json"];
     NSData *data = [NSData dataWithContentsOfFile:path];
@@ -995,6 +1000,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   void CapturePass(id<MTLTexture> target, const char *phase, uint64_t shader,
                    NSUInteger level = 0) {
+    if constexpr (mcla::kGameplayOnly) return;
     const bool depth = target.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 ||
                        target.pixelFormat == MTLPixelFormatDepth32Float;
     if (frames_ != passCaptureFrame_ || !target || passCaptureCount_ >= 32 ||
@@ -1085,6 +1091,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   void CapturePixelHistory(const uint8_t *state, uint64_t shader,
                            uint32_t textureMask, bool before = false) {
+    if constexpr (mcla::kGameplayOnly) return;
     if (!ProbeMode(@"pixel-history") || frames_ != passCaptureFrame_) return;
     auto target = before ? Target(Describe(R(state,12432)),false) : colors_[0];
     if (!pixelHistory_.CanRecord(target)) return;
@@ -1128,34 +1135,37 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     // Any wrapper aliases now point at a snapshot that may have been changed
     // by the guest write. Remove all of them so the next fetch decodes once.
     EraseSourceTexture(*contentKey);
-    ++frameInvalidatedKeys_;
+    if constexpr (!mcla::kGameplayOnly) ++frameInvalidatedKeys_;
   }
   void EraseSourceTexture(uint64_t key) {
-    frameAliasRemovals_ += sourceTextureIndex_.Erase(key);
+    const auto removed = sourceTextureIndex_.Erase(key);
+    if constexpr (!mcla::kGameplayOnly) frameAliasRemovals_ += removed;
     sourceTextures_.erase(key);
   }
   void EraseVertexBuffer(uint64_t key) {
-    frameAliasRemovals_ += bufferIndex_.Erase(key);
+    const auto removed = bufferIndex_.Erase(key);
+    if constexpr (!mcla::kGameplayOnly) frameAliasRemovals_ += removed;
     buffers_.erase(key);
   }
   void EraseIndexBuffer(uint64_t key) {
-    frameAliasRemovals_ += indexBufferIndex_.Erase(key);
+    const auto removed = indexBufferIndex_.Erase(key);
+    if constexpr (!mcla::kGameplayOnly) frameAliasRemovals_ += removed;
     indexBuffers_.erase(key);
   }
   void InvalidateResource(uint32_t resource) {
     ++resourceRevision_;
-    const double start=performanceCaptureWasActive_?CACurrentMediaTime():0;
-    ++frameInvalidationCalls_;
+    const double start=!mcla::kGameplayOnly && performanceCaptureWasActive_?CACurrentMediaTime():0;
+    if constexpr (!mcla::kGameplayOnly) ++frameInvalidationCalls_;
     InvalidateSourceTexture(resource);
     textures_.erase(resource);
     // Guest writes/releases must invalidate immediately, unlike optional age
     // eviction. Preserve the prior conservative shared-content semantics:
     // invalidating any owner removes the cached value and ALL of its aliases.
     while (auto key=bufferIndex_.FirstOwned(resource)) {
-      EraseVertexBuffer(*key);++frameInvalidatedKeys_;
+      EraseVertexBuffer(*key);if constexpr (!mcla::kGameplayOnly) ++frameInvalidatedKeys_;
     }
     while (auto key=indexBufferIndex_.FirstOwned(resource)) {
-      EraseIndexBuffer(*key);++frameInvalidatedKeys_;
+      EraseIndexBuffer(*key);if constexpr (!mcla::kGameplayOnly) ++frameInvalidatedKeys_;
     }
     if(start)frameInvalidationMS_+=(CACurrentMediaTime()-start)*1000;
   }
@@ -1171,14 +1181,14 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           else if(which==1)EraseVertexBuffer(key);
           else EraseIndexBuffer(key);
         });
-    for(unsigned i=0;i<3;++i) {
+    if constexpr (!mcla::kGameplayOnly) for(unsigned i=0;i<3;++i) {
       frameCacheEvictions_+=result.evicted[i];
       evictionsSinceLog_[i]+=result.evicted[i];
     }
-    frameCacheMaintenanceMS_=result.milliseconds;
+    if constexpr (!mcla::kGameplayOnly) frameCacheMaintenanceMS_=result.milliseconds;
   }
   Upload Allocate(size_t bytes) {
-    frameUploadBytes_ += bytes;
+    if constexpr (!mcla::kGameplayOnly) frameUploadBytes_ += bytes;
     if (!bytes || bytes > 128 * 1024 * 1024 || !Begin())
       return {};
     auto &f = flights_[slot_];
@@ -1358,7 +1368,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     }
     if (!shape)
       return nil;
-    ++resolveShapeFallbacks_;
+    if constexpr (!mcla::kGameplayOnly) ++resolveShapeFallbacks_;
     if (resolveShapeFallbacks_ <= 12)
       REXLOG_INFO("MCLA METAL resolve shape fallback size={}x{} requested={} found={} source={:08X}",
                   desc.width, desc.height, uint32_t(requestedFormat),
@@ -1374,7 +1384,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       if (!raw) { cached = {}; return cached; }
       if (cached.handle == handle && cached.revision == revision && cached.image &&
           !memcmp(cached.bytes.data(),raw,cached.bytes.size())) {
-        ++attachmentReuses_;
+        if constexpr (!mcla::kGameplayOnly) ++attachmentReuses_;
         return cached;
       }
       cached.handle = handle; cached.revision = revision;
@@ -1463,7 +1473,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (!handle) return nil; // A guest null binding is not a decode failure.
     auto missing = [&](const char* reason) -> id<MTLTexture> {
       if (!mcla::DiagnosticsEnabled()) return nil;
-      ++textureFallbacks_;
+      if constexpr (!mcla::kGameplayOnly) ++textureFallbacks_;
       if (textureFailureReasons_.size()<32 || textureFailureReasons_.contains(reason)) {
         auto& hits=textureFailureReasons_[reason];
         if (++hits<=4)
@@ -1496,7 +1506,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       found = sourceTextures_.find(contentKey);
     }
     if (found != sourceTextures_.end() && found->second.verifiedFrame != frames_) {
-      ++textureChecks_;
+      if constexpr (!mcla::kGameplayOnly) ++textureChecks_;
       found->second.verifiedFrame = frames_;
       if (!mcla::metal::TextureSamplesMatch(found->second.samples,
               [&](uint32_t a, uint32_t n) { return ReadableTextureBlock(a, n); })) {
@@ -1546,7 +1556,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto image = [device_ newTextureWithDescriptor:td];
     if (!image)
       return missing("allocation");
-    ++decodedTextures_;
+    if constexpr (!mcla::kGameplayOnly) ++decodedTextures_;
     auto fi = info.format_info();
     unsigned bpb = fi->bytes_per_block();
     if (!std::has_single_bit(bpb))
@@ -1697,7 +1707,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
   }
   bool BindResources(const uint8_t *state, const MCLAMetalShaderInfo* vsInfo,
                      const MCLAMetalShaderInfo* psInfo) {
-    const bool sample=profile_ && ((draws_&63)==0);
+    const bool sample=!mcla::kGameplayOnly && profile_ && ((draws_&63)==0);
     double stamp=sample?CACurrentMediaTime():0;
     uint64_t cpuStamp=sample?mcla::metal::ThreadCPUTimeNanoseconds():0;
     auto mark=[&](unsigned section){if(sample){
@@ -1719,7 +1729,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       auto& bank = constantBanks_[stage];
       const auto* source = state + (stage ? 6016 : 1920);
       if (bank.snapshot.Matches(source, info->constants)) {
-        ++constantBankReuses_;
+        if constexpr (!mcla::kGameplayOnly) ++constantBankReuses_;
       } else {
         auto upload = Allocate(4096);
         if (!upload.cpu) return false;
@@ -1727,7 +1737,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
             upload.cpu, source, info->constants);
         bank.snapshot.Remember(source, info->constants);
         bank.upload = upload;
-        ++constantBankUploads_;
+        if constexpr (!mcla::kGameplayOnly) ++constantBankUploads_;
       }
       addresses[stage] = bank.upload.address();
       DeclareRead(bank.upload.buffer);
@@ -1803,7 +1813,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     }
     Upload heaps;
     if(groupHit) {
-      ++textureGroupReuses_;
+      if constexpr (!mcla::kGameplayOnly) ++textureGroupReuses_;
       heaps=textureGroup_.heaps;
       memcpy(shared,textureGroup_.indices.data(),520);
       memcpy(shared+752,textureGroup_.lods.data(),104);
@@ -1823,7 +1833,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
             R(state, 1152 + i * 24 + j * 4);
       const uint32_t handle=R(state,12536+i*4);
       auto& binding = textureBindings_[i];
-      ++textureBindingLookups_;
+      if constexpr (!mcla::kGameplayOnly) ++textureBindingLookups_;
       std::array<uint32_t, 6> fetchWords;
       memcpy(fetchWords.data(), &fetch, sizeof(fetchWords));
       const bool bindingHit = binding.frame == frames_ &&
@@ -1831,7 +1841,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           binding.handle == handle && binding.fetch == fetchWords;
       if (bindingHit) {
         texture = binding.image;
-        ++textureBindingHits_;
+        if constexpr (!mcla::kGameplayOnly) ++textureBindingHits_;
       } else {
         texture = TextureFor(handle, fetch);
         const auto cached = textures_.find(handle);
@@ -1889,7 +1899,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           // conversion bit beside the tiny argument-buffer index. Generated
           // shaders mask it before indexing and convert RGB after filtering.
           const bool gamma = ((reinterpret_cast<const uint32_t *>(&fetch)[0] >> 2) & 3u) == 3u;
-          gammaBindings_ += gamma;
+          if constexpr (!mcla::kGameplayOnly) gammaBindings_ += gamma;
           const uint32_t sceneFlags = kind == 0 && produced && !neutralRoad
               ? binding.sceneFlags : 0;
           wu(kind * 104 + i * 4, i | sceneFlags | (gamma ? 0x80000000u : 0u));
@@ -1943,24 +1953,24 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (optimizeBindings_) {
       if (sharedConstantsSnapshot_.Matches(shared)) {
         constants = sharedConstantsUpload_;
-        ++sharedConstantReuses_;
+        if constexpr (!mcla::kGameplayOnly) ++sharedConstantReuses_;
       } else {
         constants = Allocate(sharedBytes.size());
         if (!constants.cpu) return false;
         memcpy(constants.cpu,shared,sharedBytes.size());
         sharedConstantsSnapshot_.Remember(shared);
         sharedConstantsUpload_ = constants;
-        ++sharedConstantUploads_;
+        if constexpr (!mcla::kGameplayOnly) ++sharedConstantUploads_;
       }
-    } else ++sharedConstantUploads_;
+    } else if constexpr (!mcla::kGameplayOnly) ++sharedConstantUploads_;
     DeclareRead(constants.buffer);
     const std::array<uint64_t,3> push{addresses[0],addresses[1],constants.address()};
     if (!optimizeBindings_ || !boundPushAddresses_.Matches(push)) {
       [encoder_ setVertexBytes:push.data() length:sizeof(push) atIndex:8];
       [encoder_ setFragmentBytes:push.data() length:sizeof(push) atIndex:8];
       boundPushAddresses_.Remember(push);
-      ++pushAddressCalls_;
-    } else ++pushAddressSkips_;
+      if constexpr (!mcla::kGameplayOnly) ++pushAddressCalls_;
+    } else if constexpr (!mcla::kGameplayOnly) ++pushAddressSkips_;
     mark(8);
     return true;
   }
@@ -2009,7 +2019,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           recipeIdentity?0:shader.info->hash,uint64_t(offset)<<32|stride};
       memcpy(exactVertex.data()+6,p,32);
       if(vertexReuse_[stream].key.Matches(exactVertex)) {
-        ++vertexReuses_;
+        if constexpr (!mcla::kGameplayOnly) ++vertexReuses_;
         return vertexReuse_[stream].upload;
       }
       auto meta = ng::DecodeNativeBufferMetadata(R(p), R(p, 24), R(p, 28));
@@ -2042,7 +2052,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         if (cached != buffers_.end()) {
           if(cached->second.frame!=frames_)bufferIndex_.Touch(*alias,frames_);
           cached->second.frame = frames_;
-          ++vertexAliasHits_;
+          if constexpr (!mcla::kGameplayOnly) ++vertexAliasHits_;
           return remember({cached->second.buffer, 0, cached->second.buffer.length});
         }
         bufferIndex_.Erase(*alias);
@@ -2086,7 +2096,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       if (cached != buffers_.end()) {
         if(cached->second.frame!=frames_)bufferIndex_.Touch(key,frames_);
         cached->second.frame = frames_;
-        ++vertexPayloadHits_;
+        if constexpr (!mcla::kGameplayOnly) ++vertexPayloadHits_;
         bufferIndex_.AddOwner(key,bind.buffer);
         bufferIndex_.BindAlias(key,wrapperKey);
         return remember({cached->second.buffer, 0, cached->second.buffer.length});
@@ -2275,7 +2285,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     if (data && uint64_t(count) * stride > UINT32_MAX)
       return Fail("inline-size");
     currentPrimitive_ = primitive;
-    const bool sample=profile_ && ((draws_&63)==0);
+    const bool sample=!mcla::kGameplayOnly && profile_ && ((draws_&63)==0);
     double stamp=sample?CACurrentMediaTime():0;
     uint64_t cpuStamp=sample?mcla::metal::ThreadCPUTimeNanoseconds():0;
     auto mark=[&](unsigned section){if(sample){
@@ -2294,7 +2304,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto vs = GetShader(vs_), ps = GetShader(ps_);
     if (!vs || (ps_ && !ps))
       return Fail("shader");
-    const bool fullSnapshot = visualCapture_.Active() || renderProbe_ || frames_ == passCaptureFrame_;
+    const bool fullSnapshot = !mcla::kGameplayOnly && (visualCapture_.Active() || renderProbe_ || frames_ == passCaptureFrame_);
     auto state = MCLANativeCanonicalDevice(raw,
         fullSnapshot ? nullptr : vs->info->constants,
         fullSnapshot || !ps ? nullptr : ps->info->constants, !fullSnapshot && optimizeDrawState_);
@@ -2327,7 +2337,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
                                          decl_,declarationRevision_};
     memcpy(exactPipeline.data()+4,fastFields.data(),sizeof(fastFields));
     auto prepare=[&]()->PreparedPipeline {
-    if(lastPipelineKey_.Matches(exactPipeline)) { ++pipelineReuses_; return lastPrepared_; }
+    if(lastPipelineKey_.Matches(exactPipeline)) { if constexpr (!mcla::kGameplayOnly) ++pipelineReuses_; return lastPrepared_; }
     uint64_t fastKey=vs->info->hash^std::rotl(ps?ps->info->hash:0,17);
     fastKey=Hash(decl.elements,decl.element_count*sizeof(ng::VertexElement),fastKey);
     fastKey=Hash(fastFields.data(),sizeof(fastFields),fastKey);
@@ -2454,7 +2464,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     id<MTLDepthStencilState> depthState = nil;
     if (optimizeDrawState_ && !preparedDepthKey_.Update(dk)) {
       depthState = preparedDepthState_;
-      ++depthLookupReuses_;
+      if constexpr (!mcla::kGameplayOnly) ++depthLookupReuses_;
     } else {
       uint64_t depthKey = Hash(dk.data(), sizeof(dk));
       depthState = depths_[depthKey];
@@ -2705,7 +2715,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         vertexPayloadBytes[s] = b.length;
         const size_t offset=b.offset+streamOffset;
         if(boundVertices_[s].buffer==b.buffer && boundVertices_[s].offset==offset)
-          ++vertexBindSkips_;
+          if constexpr (!mcla::kGameplayOnly) ++vertexBindSkips_;
         else {
           [encoder_ setVertexBuffer:b.buffer offset:offset atIndex:9+s];
           boundVertices_[s]={b.buffer,offset};
@@ -2741,7 +2751,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         persistentIndexUpload=lastIndexUpload_;
         persistentIndexCount=lastIndexCount_;
         vertexIndices=lastIndexVertices_;
-        ++indexReuses_;
+        if constexpr (!mcla::kGameplayOnly) ++indexReuses_;
       } else {
       auto m = ng::DecodeNativeBufferMetadata(R(p), R(p, 24), R(p, 28));
       bool index32 = R(p) & 0x80000000;
@@ -2913,7 +2923,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           [encoder_ drawPrimitives:type vertexStart:start+slice.first vertexCount:slice.count];
     }
     ++draws_;
-    if (visualCapture_.Active())
+    if (mcla::DiagnosticsEnabled() && visualCapture_.Active())
       visualCapture_.Draw(state,draws_,vs->info->hash,ps?ps->info->hash:0,
           primitive,count,colors_[0],drawSurfaces_[0].address,drawSurfaces_[0].format,
           drawSurfaces_[0].base,drawSurfaces_[0].sample_type,drawSurfaces_[0].width,drawSurfaces_[0].height);
@@ -2923,8 +2933,10 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     }
     // Constant-size pass context survives Retail Mode without string work or
     // disk writes on individual draws. Detailed pair inventories stay opt-in.
-    ++encoderDraws_;
-    encoderLastPair_={vs->info->hash,ps?ps->info->hash:0};
+    if constexpr (!mcla::kGameplayOnly) {
+      ++encoderDraws_;
+      encoderLastPair_={vs->info->hash,ps?ps->info->hash:0};
+    }
     if (mcla::DiagnosticsEnabled()) {
       for(const auto* shader : {vs,ps}) if(shader) {
         if(shader->bundledIndex>=0) {
@@ -3548,10 +3560,10 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     }
     // Snapshot once: a UIKit toggle cannot split a frame between modes.
     frameFSREnabled_=MCLAGraphicsFSREnabled();
-    const double presentStart = CACurrentMediaTime();
-    const auto nativeTiming = MCLANativeTakeFrameTiming();
+    const double presentStart = mcla::kGameplayOnly ? 0 : CACurrentMediaTime();
+    const auto nativeTiming = mcla::kGameplayOnly ? MCLANativeFrameTiming{} : MCLANativeTakeFrameTiming();
     const bool performanceCaptureActive =
-        MCLAGraphicsPerformanceCaptureRemainingSeconds() > 0.0;
+        mcla::DiagnosticsEnabled() && MCLAGraphicsPerformanceCaptureRemainingSeconds() > 0.0;
     profile_ = baseProfile_ || performanceCaptureActive;
     if (performanceCaptureActive != performanceCaptureWasActive_) {
       REXLOG_INFO("MCLA METAL bounded performance capture {} frame={} scene_height={} fsr={}",
@@ -3570,7 +3582,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     xn::xe_gpu_texture_fetch_t f{};
     memcpy(&f, c.frontbuffer_fetch, 24);
     auto source = TextureFor(c.frontbuffer_texture, f);
-    if (visualCapture_.Active()) {
+    if (mcla::DiagnosticsEnabled() && visualCapture_.Active()) {
       visualCapture_.Snapshot(commands_,source,@"present-source",c.frontbuffer_texture,draws_,true);
       visualCapture_.Finish(commands_);
     }
@@ -3587,9 +3599,9 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       REXLOG_INFO("MCLA METAL PROBE capture_submitted mode={} token={} frame={} overrides={} images={}",
           probeMode_.UTF8String, probeToken_, frames_, probeOverrides_, passCaptureCount_);
     }
-    const double drawableStart = CACurrentMediaTime();
+    const double drawableStart = mcla::kGameplayOnly ? 0 : CACurrentMediaTime();
     auto drawable = [layer_ nextDrawable];
-    const double drawableWaitMS = (CACurrentMediaTime() - drawableStart) * 1000;
+    const double drawableWaitMS = mcla::kGameplayOnly ? 0 : (CACurrentMediaTime() - drawableStart) * 1000;
     id<MTLTexture> presentSource = source;
 #if MCLA_SMAA_LAB
     if (drawable && source && smaaEnabled_) {
@@ -3713,10 +3725,27 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
     auto presented = outputReady;
     // A shared timestamp is filled immediately before commit, after handler
     // registration. Captured by value, it outlives this CPU stack frame.
-    auto commitTime = std::make_shared<double>(0);
+    auto commitTime = mcla::kGameplayOnly ? std::shared_ptr<double>{} : std::make_shared<double>(0);
     auto passTrace=gpuPassTrace_;
+#if !MCLA_GAMEPLAY_ONLY
     const auto shaderBits=frameShaderBits_;
+#endif
     const auto automaticShaders=frameAutomaticShaders_;
+#if MCLA_GAMEPLAY_ONLY
+    // Completion ownership and recovery are gameplay correctness, not telemetry.
+    [commands_ addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+      if (cb.status == MTLCommandBufferStatusError) {
+        for (auto [vertex,hash] : automaticShaders)
+          mcla::shader::SuspendAfterGPUError(hash,vertex);
+        const bool revoked=[cb.error.domain isEqualToString:MTLCommandBufferErrorDomain] &&
+            cb.error.code==MTLCommandBufferErrorBlacklisted;
+        self->gpuRecovery_.Error(revoked);
+        if (revoked) self->ReportGPUStop();
+      }
+      MCLAGraphicsNoteMetalCompletion(presented && cb.status == MTLCommandBufferStatusCompleted);
+      dispatch_semaphore_signal(semaphore);
+    }];
+#else
     [commands_ addCompletedHandler:^(id<MTLCommandBuffer> cb) {
       self->completed_.fetch_add(1);
       if (cb.status == MTLCommandBufferStatusError) {
@@ -3810,7 +3839,8 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       }
       dispatch_semaphore_signal(semaphore);
     }];
-    *commitTime = CACurrentMediaTime();
+#endif
+    if constexpr (!mcla::kGameplayOnly) *commitTime = CACurrentMediaTime();
     if (performanceCaptureActive) {
       sample.submitMilliseconds = lastPresentSubmitTime_ > 0 ?
           (*commitTime - lastPresentSubmitTime_) * 1000 : 0;
@@ -3857,7 +3887,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
           bool(NSProcessInfo.processInfo.lowPowerModeEnabled),
           constantBankUploads_,constantBankReuses_);
     }
-    lastPresentSubmitTime_ = *commitTime;
+    if constexpr (!mcla::kGameplayOnly) lastPresentSubmitTime_ = *commitTime;
     frameCommandMS_ = frameSlotWaitMS_ = 0;
     submissionThreadWallMS_=submissionThreadCPUMS_=-1;
     frameUploadBytes_ = 0;
@@ -3888,11 +3918,13 @@ public:
     layer_ = (__bridge CAMetalLayer *)MCLAGraphicsBoundMetalLayer();
     device_ = layer_.device;
     queue_ = [device_ newCommandQueue];
+    if constexpr (!mcla::kGameplayOnly) {
     NSString* faultDirectory = [NSHomeDirectory() stringByAppendingPathComponent:
         @"Library/Application Support/MCLA/logs"];
     mcla::metal::StartGPUFaultCapture(faultJournal_,faultDirectory,
         NSBundle.mainBundle.infoDictionary,device_.name,mcla::DiagnosticsEnabled());
-    gpuCountersSupported_=[device_ supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary];
+    }
+    gpuCountersSupported_=!mcla::kGameplayOnly && [device_ supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary];
     if (!device_ || !queue_)
       return 0xC0000001;
     if (const char* plan=std::getenv("MCLA_METAL_VERTEX_FIXUP_PLAN"))
@@ -4038,7 +4070,7 @@ public:
     REXLOG_INFO("MCLA HANDWRITTEN METAL active device={} flight_slots=3 "
                 "generic_cp=0 vulkan=0 moltenvk=0",
                 device_.name.UTF8String);
-    faultJournal_.Record("renderer_ready", "{\"flight_slots\":3,\"encoder_status\":true}");
+    if constexpr (!mcla::kGameplayOnly) faultJournal_.Record("renderer_ready", "{\"flight_slots\":3,\"encoder_status\":true}");
     return 0;
   }
   uint32_t GetTitleCommandAbi(uint32_t title) const override {
@@ -4058,7 +4090,7 @@ public:
         double* total;
         double start;
         ~CommandTimer() { if (total) *total += (CACurrentMediaTime()-start)*1000; }
-      } timer{performanceCaptureWasActive_ && h->type != ng::CommandType::kPresent
+      } timer{!mcla::kGameplayOnly && performanceCaptureWasActive_ && h->type != ng::CommandType::kPresent
                   ? &frameCommandMS_ : nullptr, 0};
       if (timer.total) timer.start = CACurrentMediaTime();
 #define CMD(T)                                                                 \

@@ -22,6 +22,7 @@
 #include <rex/input/input.h>
 #include <ios/ios_input_driver.h>
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/memory/utils.h>
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/interfaces/audio.h>
@@ -479,7 +480,7 @@ void MCLASetVirtualGamepadButton(uint16_t buttonMask, bool pressed) {
         previous, desired, std::memory_order_release,
         std::memory_order_relaxed));
     gVirtualGamepadPacket.fetch_add(1, std::memory_order_relaxed);
-    gVirtualButtonEdges.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gVirtualButtonEdges.fetch_add(1, std::memory_order_relaxed);
     QueueVirtualKeystroke(VirtualKeyForButton(buttonMask), pressed);
 }
 
@@ -488,7 +489,7 @@ void MCLASetVirtualGamepadTrigger(bool right, bool pressed) {
     const uint8_t value = mcla::touch::Trigger(pressed);
     if (trigger.exchange(value, std::memory_order_acq_rel) == value) return;
     gVirtualGamepadPacket.fetch_add(1, std::memory_order_relaxed);
-    gVirtualButtonEdges.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gVirtualButtonEdges.fetch_add(1, std::memory_order_relaxed);
     QueueVirtualKeystroke(static_cast<uint16_t>(right
         ? rex::ui::VirtualKey::kXInputPadRTrigger
         : rex::ui::VirtualKey::kXInputPadLTrigger), pressed);

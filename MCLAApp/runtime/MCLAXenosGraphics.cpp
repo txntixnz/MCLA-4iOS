@@ -18,6 +18,7 @@
 #include <rex/graphics/register_file.h>
 #include <rex/graphics/vulkan/command_processor.h>
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/interfaces/graphics.h>
 #include <rex/system/kernel_state.h>

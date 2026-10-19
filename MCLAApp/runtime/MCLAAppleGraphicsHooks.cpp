@@ -1,6 +1,8 @@
+#include "MCLADiagnostics.h"
 #include <rex/ppc.h>
 #include <rex/memory.h>
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/system/function_dispatcher.h>
 
 #include <atomic>
@@ -64,8 +66,8 @@ uint32_t LoadGuestU32(uint8_t* base, uint32_t address) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_DrawIndexedVertices);
 extern "C" REX_FUNC(D3DDevice_DrawIndexedVertices) {
-    gLastHook.store("D3DDevice_DrawIndexedVertices", std::memory_order_relaxed);
-    gDrawIndexed.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_DrawIndexedVertices", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gDrawIndexed.fetch_add(1, std::memory_order_relaxed);
     // Capture before the generated D3D path flushes constant/fetch dirtiness.
     MCLANativeTitleBridgeDraw(base, ctx.r3.u32, ctx.r4.u32, ctx.r7.u32,
                               ctx.r6.u32, int32_t(ctx.r5.u32), true);
@@ -76,8 +78,8 @@ extern "C" REX_FUNC(D3DDevice_DrawIndexedVertices) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_DrawVertices);
 extern "C" REX_FUNC(D3DDevice_DrawVertices) {
-    gLastHook.store("D3DDevice_DrawVertices", std::memory_order_relaxed);
-    gDraw.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_DrawVertices", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gDraw.fetch_add(1, std::memory_order_relaxed);
     MCLANativeTitleBridgeDraw(base, ctx.r3.u32, ctx.r4.u32, ctx.r6.u32,
                               ctx.r5.u32, 0, false);
 #if !MCLA_NATIVE_TITLE
@@ -87,8 +89,8 @@ extern "C" REX_FUNC(D3DDevice_DrawVertices) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_BeginTiling);
 extern "C" REX_FUNC(D3DDevice_BeginTiling) {
-    gLastHook.store("D3DDevice_BeginTiling", std::memory_order_relaxed);
-    gBeginTiling.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_BeginTiling", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gBeginTiling.fetch_add(1, std::memory_order_relaxed);
     MCLANativeTitleBridgeBeginTiling(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
 #if MCLA_NATIVE_TITLE
     MCLANativeBeginTiling(base, ctx.r3.u32, ctx.r5.u32, ctx.r6.u32);
@@ -98,8 +100,8 @@ extern "C" REX_FUNC(D3DDevice_BeginTiling) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_EndTiling);
 extern "C" REX_FUNC(D3DDevice_EndTiling) {
-    gLastHook.store("D3DDevice_EndTiling", std::memory_order_relaxed);
-    gEndTiling.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_EndTiling", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gEndTiling.fetch_add(1, std::memory_order_relaxed);
     const uint32_t device = ctx.r3.u32;
     const uint32_t flags = ctx.r4.u32;
     const uint32_t destinationTexture = ctx.r6.u32;
@@ -109,8 +111,8 @@ extern "C" REX_FUNC(D3DDevice_EndTiling) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_Resolve);
 extern "C" REX_FUNC(D3DDevice_Resolve) {
-    gLastHook.store("D3DDevice_Resolve", std::memory_order_relaxed);
-    gResolves.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_Resolve", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gResolves.fetch_add(1, std::memory_order_relaxed);
     const uint32_t device = ctx.r3.u32;
     const uint32_t flags = ctx.r4.u32;
     const uint32_t sourceRect = ctx.r5.u32;
@@ -137,8 +139,8 @@ extern "C" REX_FUNC(D3DDevice_Resolve) {
 
 extern "C" REX_FUNC(rex_generated_grcDevice_EndFrame);
 extern "C" REX_FUNC(grcDevice_EndFrame) {
-    gLastHook.store("grcDevice_EndFrame", std::memory_order_relaxed);
-    gFrameEnds.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("grcDevice_EndFrame", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gFrameEnds.fetch_add(1, std::memory_order_relaxed);
     const uint32_t device = ctx.r3.u32;
     rex_generated_grcDevice_EndFrame(ctx, base);
     MCLANativeTitleBridgeFrameEnd(device);
@@ -146,8 +148,8 @@ extern "C" REX_FUNC(grcDevice_EndFrame) {
 
 extern "C" REX_FUNC(rex_generated_rex_sub_824195E8);
 extern "C" REX_FUNC(rex_sub_824195E8) {
-    gLastHook.store("rex_sub_824195E8", std::memory_order_relaxed);
-    gClears.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("rex_sub_824195E8", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gClears.fetch_add(1, std::memory_order_relaxed);
 #if MCLA_NATIVE_TITLE
     MCLANativeClear(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32,
                     ctx.r6.u32, ctx.r7.u32,
@@ -162,8 +164,8 @@ extern "C" REX_FUNC(rex_sub_824195E8) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_BeginVertices);
 extern "C" REX_FUNC(D3DDevice_BeginVertices) {
-    gLastHook.store("D3DDevice_BeginVertices", std::memory_order_relaxed);
-    gBeginVertices.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_BeginVertices", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gBeginVertices.fetch_add(1, std::memory_order_relaxed);
     const uint32_t device = ctx.r3.u32;
     const uint32_t primitive = ctx.r4.u32;
     const uint32_t count = ctx.r5.u32;
@@ -174,19 +176,20 @@ extern "C" REX_FUNC(D3DDevice_BeginVertices) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_EndVertices);
 extern "C" REX_FUNC(D3DDevice_EndVertices) {
-    gLastHook.store("D3DDevice_EndVertices", std::memory_order_relaxed);
-    gEndVertices.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_EndVertices", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gEndVertices.fetch_add(1, std::memory_order_relaxed);
     rex_generated_D3DDevice_EndVertices(ctx, base);
 
     const PendingInlineDraw draw = gPendingInline;
     if (!draw.buffer || !draw.count || !draw.stride) {
         return;
     }
-    gInlinePrimitive.store(draw.primitive, std::memory_order_relaxed);
-    gInlineVertexCount.store(draw.count, std::memory_order_relaxed);
-    gInlineStride.store(draw.stride, std::memory_order_relaxed);
-    gInlineBuffer.store(draw.buffer, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gInlinePrimitive.store(draw.primitive, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gInlineVertexCount.store(draw.count, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gInlineStride.store(draw.stride, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gInlineBuffer.store(draw.buffer, std::memory_order_relaxed);
     uint32_t checksum = 2166136261u;
+    if constexpr (!mcla::kGameplayOnly) {
     const uint32_t bytes = std::min<uint32_t>(draw.count * draw.stride, 256u);
     const uint32_t words = bytes / 4u;
     for (uint32_t i = 0; i < words; ++i) {
@@ -197,6 +200,7 @@ extern "C" REX_FUNC(D3DDevice_EndVertices) {
         }
     }
     gInlineChecksum.store(checksum, std::memory_order_release);
+    }
     MCLANativeTitleBridgeInlineDraw(base, draw.device, draw.primitive,
                                     draw.count, draw.stride, draw.buffer);
 #if MCLA_NATIVE_TITLE
@@ -236,11 +240,12 @@ extern "C" REX_FUNC(D3DDevice_EndVertices) {
 
 extern "C" REX_FUNC(rex_generated_D3DDevice_Swap);
 extern "C" REX_FUNC(D3DDevice_Swap) {
-    gLastHook.store("D3DDevice_Swap", std::memory_order_relaxed);
-    const uint64_t frame = gSwaps.fetch_add(1, std::memory_order_relaxed) + 1;
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_Swap", std::memory_order_relaxed);
+    const uint64_t frame = mcla::kGameplayOnly ? 0 : gSwaps.fetch_add(1, std::memory_order_relaxed) + 1;
     const uint32_t device = ctx.r3.u32;
 #if MCLA_NATIVE_TITLE
-    if (MCLANativePresent(base, device, ctx.r4.u32)) ++gNativePresents;
+    const bool presented = MCLANativePresent(base, device, ctx.r4.u32);
+    if constexpr (!mcla::kGameplayOnly) { if (presented) ++gNativePresents; }
     ctx.r3.u64 = 0;
     return;
 #endif
@@ -267,8 +272,8 @@ extern "C" REX_FUNC(D3DDevice_Swap) {
 MCLA_OBSERVED_FORWARD(D3DDevice_BlockUntilIdle, gIdleBypasses)
 #else
 extern "C" REX_FUNC(D3DDevice_BlockUntilIdle) {
-    gLastHook.store("D3DDevice_BlockUntilIdle", std::memory_order_relaxed);
-    gIdleBypasses.fetch_add(1, std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gLastHook.store("D3DDevice_BlockUntilIdle", std::memory_order_relaxed);
+    if constexpr (!mcla::kGameplayOnly) gIdleBypasses.fetch_add(1, std::memory_order_relaxed);
 }
 #endif
 

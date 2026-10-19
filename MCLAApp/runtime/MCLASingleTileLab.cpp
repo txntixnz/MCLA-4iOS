@@ -1,4 +1,5 @@
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/ppc/context.h>
 
 #include <atomic>

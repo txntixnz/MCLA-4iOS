@@ -10,6 +10,7 @@
 #include <rex/memory.h>
 #include <rex/runtime.h>
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/system/xmemory.h>
 
 #include <algorithm>
@@ -618,6 +619,11 @@ class NativeTitleBridge {
     }
 
     void AttachCapture(const uint8_t* base, TitleCommand& command, bool missingOnly=false) {
+#if MCLA_DIRECT_METAL
+        if constexpr (mcla::kGameplayOnly) {
+            if (!missingOnly || !mcla::shader::Enabled()) return;
+        }
+#endif
         if ((!mcla::DiagnosticsEnabled() && !missingOnly) || (!ShaderCaptureEnabled() && !missingOnly)) return;
         if (!base || (!command.vertexShaderIdentity &&
                       !command.pixelShaderIdentity)) {
@@ -729,6 +735,7 @@ class NativeTitleBridge {
                     {},words(payload->pixelInterpolators),command.pixelOutputs});
         }
 #endif
+        if constexpr (mcla::kGameplayOnly) return;
         command.automaticCapture = missingOnly;
         command.capture = std::move(payload);
     }

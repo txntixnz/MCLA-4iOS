@@ -13,6 +13,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(MCLA_RUNTIME_ENABLED "Link the MCLA AOT runtime and enable launch attempts" ON)
 option(MCLA_DIRECT_METAL "Use the hand-written title Metal renderer; no generic fallback" ON)
+option(MCLA_GAMEPLAY_ONLY "Compile out diagnostic recording and profiling" OFF)
+if(MCLA_GAMEPLAY_ONLY AND (NOT MCLA_RUNTIME_ENABLED OR NOT MCLA_DIRECT_METAL))
+    message(FATAL_ERROR "Gameplay-only requires the native title runtime and Metal renderer")
+endif()
 option(MCLA_SINGLE_TILE_LAB "Build a separate MCLA Lab app with the guarded single-tile experiment" OFF)
 option(MCLA_SMAA_LAB "Build a separate MCLA Lab app with handwritten Metal SMAA" OFF)
 if(MCLA_SINGLE_TILE_LAB AND MCLA_SMAA_LAB)
@@ -383,6 +387,7 @@ if(MCLA_RUNTIME_ENABLED AND MCLA_ENABLE_XENOS_VULKAN)
 endif()
 
 target_compile_definitions(MCLAApp PRIVATE
+    MCLA_GAMEPLAY_ONLY=$<BOOL:${MCLA_GAMEPLAY_ONLY}>
     MCLA_NATIVE_TITLE=1
     MCLA_DIRECT_METAL=$<BOOL:${MCLA_DIRECT_METAL}>
     MCLA_RUNTIME_ENABLED=$<BOOL:${MCLA_RUNTIME_ENABLED}>

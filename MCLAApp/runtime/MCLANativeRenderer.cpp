@@ -25,6 +25,7 @@
 #include <rex/system/xmemory.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include "MCLANativeGpuCompatibility.h"
 #include <shader/shader_cache.h>
 #if MCLA_DIRECT_METAL
@@ -55,7 +56,7 @@ gta4::frame_limiter::State framePacing;
 double nativeDrawMilliseconds = 0;
 std::atomic<double> previousPacingMilliseconds{0};
 struct NativeDrawTimer {
-  bool enabled = MCLAGraphicsPerformanceCaptureActive();
+  bool enabled = !mcla::kGameplayOnly && MCLAGraphicsPerformanceCaptureActive();
   std::chrono::steady_clock::time_point start = enabled ?
       std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   ~NativeDrawTimer() {
@@ -157,7 +158,7 @@ void OverlayShaderConstants(uint8_t* snapshot,const uint8_t* device,bool pixel) 
   }
   if(definitionCount) {
     static std::atomic<uint32_t> reports{0};
-    if(reports.load(std::memory_order_relaxed)<12 &&
+    if(!mcla::kGameplayOnly && reports.load(std::memory_order_relaxed)<12 &&
        reports.fetch_add(1,std::memory_order_relaxed)<12)
       REXLOG_INFO("MCLA native shader constants stage={} object={:08X} definitions={} c255={:08X}",
                   pixel?"ps":"vs",object,definitionCount,R(snapshot,(pixel?6016:1920)+255*16));
@@ -545,7 +546,7 @@ bool MCLANativePresent(uint8_t* base,uint32_t dev,uint32_t texture){
     const auto decision=gta4::frame_limiter::Plan(framePacing,MCLAGraphicsFrameRate(),now);
     framePacing=decision.next_state;
     if(decision.should_wait(now))std::this_thread::sleep_until(Clock::time_point(Nanoseconds(decision.wait_until_ns)));
-    previousPacingMilliseconds.store(std::chrono::duration<double,std::milli>(
+    if constexpr (!mcla::kGameplayOnly) previousPacingMilliseconds.store(std::chrono::duration<double,std::milli>(
         Clock::now()-Clock::time_point(Nanoseconds(now))).count(),std::memory_order_relaxed);
   }
   return ok;

@@ -188,7 +188,7 @@ void EnsureDeviceLocked() {
     if (!gFrameSlots) {
         gFrameSlots = dispatch_semaphore_create(kMaximumFramesInFlight);
     }
-    if (gMetalDevice && !gDiagnosticPipeline && !gPipelineError[0]) {
+    if (!mcla::kGameplayOnly && gMetalDevice && !gDiagnosticPipeline && !gPipelineError[0]) {
         NSError* error = nil;
         id<MTLLibrary> library =
             [gMetalDevice newLibraryWithSource:kDiagnosticMetalSource
@@ -586,8 +586,8 @@ void MCLAGraphicsGetReport(MCLAGraphicsReport* report) {
     os_unfair_lock_lock(&gPresenterLock);
     CAMetalLayer* layer = gBoundLayer;
     report->metalPresenterReady = layer && gMetalDevice && gCommandQueue;
-    report->diagnosticPipelineReady = gDiagnosticPipeline && gInlinePipeline &&
-        gDiagnosticDepthState && !gPipelineError[0];
+    report->diagnosticPipelineReady = mcla::kGameplayOnly ? report->metalPresenterReady :
+        gDiagnosticPipeline && gInlinePipeline && gDiagnosticDepthState && !gPipelineError[0];
     const CGSize drawableSize = layer ? layer.drawableSize : CGSizeZero;
     os_unfair_lock_unlock(&gPresenterLock);
 
@@ -732,6 +732,7 @@ bool MCLAGraphicsStartPerformanceCapture(void) {
 }
 
 void MCLAGraphicsNotePerformanceFrame(const MCLAPerformanceFrame* frame) {
+    if constexpr (mcla::kGameplayOnly) return;
     if (!frame) return;
     const int thermal = int(NSProcessInfo.processInfo.thermalState);
     const bool lowPower = NSProcessInfo.processInfo.lowPowerModeEnabled;
@@ -748,6 +749,7 @@ void MCLAGraphicsNotePerformanceFrame(const MCLAPerformanceFrame* frame) {
 }
 
 bool MCLAGraphicsPerformanceCaptureActive(void) {
+    if constexpr (mcla::kGameplayOnly) return false;
     return gPerformanceActiveFast.load(std::memory_order_relaxed);
 }
 
@@ -755,6 +757,7 @@ bool MCLAGraphicsPerformanceCaptureActive(void) {
 // update the exact frame and leave -1 for genuinely unobserved callbacks.
 void MCLAGraphicsNotePerformanceGPU(uint64_t frame, double gpuMilliseconds,
     double commitToGPUMilliseconds, double driverMilliseconds) {
+    if constexpr (mcla::kGameplayOnly) return;
     os_unfair_lock_lock(&gFrameTimingLock);
     auto row = std::lower_bound(gPerformanceRows.begin(), gPerformanceRows.end(), frame,
         [](const auto& r, uint64_t f) { return r.frame.frame < f; });
@@ -767,6 +770,7 @@ void MCLAGraphicsNotePerformanceGPU(uint64_t frame, double gpuMilliseconds,
 }
 
 void MCLAGraphicsNoteGPUPasses(const MCLAGPUPassTiming* passes,uint32_t count) {
+    if constexpr (mcla::kGameplayOnly) return;
     if(!passes || !count)return;
     os_unfair_lock_lock(&gFrameTimingLock);
     auto row=std::lower_bound(gPerformanceRows.begin(),gPerformanceRows.end(),passes[0].frame,
@@ -781,6 +785,7 @@ void MCLAGraphicsNoteGPUPasses(const MCLAGPUPassTiming* passes,uint32_t count) {
     os_unfair_lock_unlock(&gFrameTimingLock);
 }
 void MCLAGraphicsNotePerformancePresented(uint64_t frame, double seconds) {
+    if constexpr (mcla::kGameplayOnly) return;
     os_unfair_lock_lock(&gFrameTimingLock);
     auto row = std::lower_bound(gPerformanceRows.begin(), gPerformanceRows.end(), frame,
         [](const auto& r, uint64_t f) { return r.frame.frame < f; });
@@ -790,6 +795,7 @@ void MCLAGraphicsNotePerformancePresented(uint64_t frame, double seconds) {
 }
 
 double MCLAGraphicsPerformanceCaptureRemainingSeconds(void) {
+    if constexpr (mcla::kGameplayOnly) return -1;
     os_unfair_lock_lock(&gFrameTimingLock);
     const double now = CACurrentMediaTime();
     const double result = gPerformanceActive
@@ -800,6 +806,7 @@ double MCLAGraphicsPerformanceCaptureRemainingSeconds(void) {
 }
 
 void MCLAGraphicsFinishPerformanceCapture(void) {
+    if constexpr (mcla::kGameplayOnly) return;
     std::vector<PerformanceCaptureRow> rows;
     std::vector<MCLAGPUPassTiming> passes;
     uint64_t droppedPassRows=0;

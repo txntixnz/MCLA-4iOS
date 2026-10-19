@@ -15,6 +15,7 @@
 #include <rex/kernel/crt/heap.h>
 #include <rex/kernel/xboxkrnl/video.h>
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/memory/utils.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
@@ -59,7 +60,7 @@ PPCFunc* gOriginalEntry = nullptr;
 void SetStatus(std::string status) {
     std::lock_guard lock(gStatusMutex);
     gStatus = std::move(status);
-    if (!gStatusPath.empty()) {
+    if (!mcla::kGameplayOnly && !gStatusPath.empty()) {
         std::ofstream output(gStatusPath, std::ios::trunc);
         output << gStatus << '\n';
     }
@@ -397,7 +398,7 @@ class MCLALaunchProbeGraphics final : public rex::system::IGraphicsSystem {
                 vblanks_.fetch_add(1, std::memory_order_relaxed);
                 last += interval;
             }
-            if (++reportTicks >= 1000) {
+            if (!mcla::kGameplayOnly && ++reportTicks >= 1000) {
                 reportTicks = 0;
                 MCLAAppleGraphicsHookReport hooks{};
                 MCLAGetAppleGraphicsHookReport(&hooks);

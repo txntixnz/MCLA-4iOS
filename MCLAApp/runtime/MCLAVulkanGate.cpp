@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <rex/logging.h>
+#include "MCLAQuietLogging.h"
 #include <rex/ui/surface.h>
 #include <rex/ui/vulkan/device.h>
 #include <rex/ui/vulkan/instance.h>
