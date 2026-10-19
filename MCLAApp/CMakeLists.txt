@@ -270,6 +270,7 @@ if(MCLA_RUNTIME_ENABLED)
 endif()
 
 add_executable(MCLAApp MACOSX_BUNDLE ${MCLA_APP_SOURCES})
+target_compile_options(MCLAApp PRIVATE -Werror=dangling-else)
 
 if(MCLA_SINGLE_TILE_LAB)
     target_sources(MCLAApp PRIVATE runtime/MCLASingleTileLab.cpp)

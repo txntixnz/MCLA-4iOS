@@ -2714,9 +2714,9 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
         if (streamOffset > b.length) return Fail("vertex-offset");
         vertexPayloadBytes[s] = b.length;
         const size_t offset=b.offset+streamOffset;
-        if(boundVertices_[s].buffer==b.buffer && boundVertices_[s].offset==offset)
+        if(boundVertices_[s].buffer==b.buffer && boundVertices_[s].offset==offset) {
           if constexpr (!mcla::kGameplayOnly) ++vertexBindSkips_;
-        else {
+        } else {
           [encoder_ setVertexBuffer:b.buffer offset:offset atIndex:9+s];
           boundVertices_[s]={b.buffer,offset};
         }
