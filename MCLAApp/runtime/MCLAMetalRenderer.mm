@@ -3586,7 +3586,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       visualCapture_.Snapshot(commands_,source,@"present-source",c.frontbuffer_texture,draws_,true);
       visualCapture_.Finish(commands_);
     }
-    if (renderProbe_ && frames_ == passCaptureFrame_) {
+    if (!mcla::kGameplayOnly && renderProbe_ && frames_ == passCaptureFrame_) {
       CapturePass(source, "present", 0);
       if (ProbeMode(@"pixel-history")) {
         NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/mcla-pass-capture"];
@@ -3697,7 +3697,7 @@ class MetalRenderer final : public rex::system::IGraphicsSystem {
       constantRegistersUploaded_ = 0;
       evictionsSinceLog_ = {};
     }
-    if (capture_ && frame == 900 && source) {
+    if (!mcla::kGameplayOnly && capture_ && frame == 900 && source) {
       auto read = Allocate(source.width * source.height * 8);
       auto e = BlitEncoder("frame-readback");
       [e copyFromTexture:source
